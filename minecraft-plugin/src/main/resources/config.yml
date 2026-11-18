@@ -1,15 +1,12 @@
 
 # ==========================================
 # NOVATERRA PAYMENT
-# Main Configuration
-#
 # Developed by Vortex Teams
 # ==========================================
 
-# Developer Information
 developer:
   name: "Vortex Teams"
-  project: "NovaTerra Payment"
+  project: "NOVATERRA PAYMENT"
   version: "1.0.0"
 
 settings:
@@ -32,13 +29,30 @@ database:
 
 api:
   enabled: false
-  host: "127.0.0.1"
-  port: 8765
+
+  # Isi setelah domain HTTPS tersedia.
+  url: "https://payment.domain-kamu.com"
+
+  # Samakan dengan secret API setelah sistem autentikasi dibuat.
   secret: "CHANGE_THIS_SECRET"
+
+  connection-timeout: 10000
+  read-timeout: 15000
+
+  synchronization:
+    enabled: false
+    interval-seconds: 5
+    batch-size: 20
 
 coin:
   currency-name: "Coin"
   starting-balance: 0
+
+payment:
+  provider: "MIDTRANS"
+  currency: "IDR"
+  enabled-methods:
+    - QRIS
 
 messages:
   prefix: "&8[&bNovaTerra&8] "
