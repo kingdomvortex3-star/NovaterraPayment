@@ -6,8 +6,10 @@ const midtransClient = require("midtrans-client");
 
 const initializeDatabase = require("./src/database/database");
 const verifySignature = require("./src/security/auth");
+
 const registerPaymentRoutes = require("./src/routes/payment");
 const registerWebhook = require("./src/routes/webhook");
+const registerDeliveryRoutes = require("./src/routes/delivery");
 
 async function startServer() {
     const app = express();
@@ -35,7 +37,6 @@ async function startServer() {
         throw new Error("API_SECRET belum dikonfigurasi.");
     }
 
-    // Inisialisasi database secara asynchronous.
     const db = await initializeDatabase();
 
     const snap = new midtransClient.Snap({
@@ -59,12 +60,16 @@ async function startServer() {
         });
     });
 
-    // Autentikasi untuk endpoint pembuatan pembayaran.
+    // API authentication
     app.use("/api/payment", verifySignature);
+    app.use("/api/delivery", verifySignature);
 
+    // Register routes
     registerPaymentRoutes(app, db);
     registerWebhook(app, db);
+    registerDeliveryRoutes(app, db);
 
+    // 404 handler
     app.use((req, res) => {
         res.status(404).json({
             success: false,
@@ -72,6 +77,7 @@ async function startServer() {
         });
     });
 
+    // Error handler
     app.use((error, req, res, next) => {
         console.error(
             "[NOVATERRA] Server error:",
@@ -95,6 +101,7 @@ async function startServer() {
         console.log("Database       : SQLite initialized");
         console.log("Authentication : Enabled");
         console.log("Midtrans       : Initialized");
+        console.log("Coin Delivery  : Enabled");
         console.log("====================================");
     });
 
