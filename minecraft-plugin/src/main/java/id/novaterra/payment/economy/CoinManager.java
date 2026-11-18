@@ -8,13 +8,17 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 public final class CoinManager {
 
     private final NovaTerraPayment plugin;
     private final DatabaseManager database;
+
+    private final ConcurrentMap<UUID, Long> balanceCache =
+            new ConcurrentHashMap<>();
 
     public CoinManager(
             NovaTerraPayment plugin,
@@ -29,8 +33,11 @@ public final class CoinManager {
 
         try (Connection connection = database.getConnection()) {
 
-            if (getBalance(connection, uuid) != null) {
+            Long balance = getBalance(connection, uuid);
+
+            if (balance != null) {
                 updateUsername(connection, uuid, username);
+                balanceCache.put(uuid, balance);
                 return;
             }
 
@@ -42,33 +49,69 @@ public final class CoinManager {
                     VALUES (?, ?, ?, ?, ?)
                     """;
 
+            long startingBalance = plugin.getConfig()
+                    .getLong("coin.starting-balance", 0);
+
+            if (!CoinValidator.isValidBalance(startingBalance)) {
+                throw new SQLException("Invalid starting balance!");
+            }
+
             try (PreparedStatement statement =
                          connection.prepareStatement(sql)) {
 
                 statement.setString(1, uuid.toString());
                 statement.setString(2, username);
-                statement.setLong(3, plugin.getConfig()
-                        .getLong("coin.starting-balance", 0));
+                statement.setLong(3, startingBalance);
                 statement.setLong(4, now);
                 statement.setLong(5, now);
 
                 statement.executeUpdate();
+                balanceCache.put(uuid, startingBalance);
             }
         }
     }
 
     public long getBalance(UUID uuid) throws SQLException {
 
+        Long cached = balanceCache.get(uuid);
+
+        if (cached != null) {
+            return cached;
+        }
+
         try (Connection connection = database.getConnection()) {
 
             Long balance = getBalance(connection, uuid);
 
-            return balance == null ? 0L : balance;
+            if (balance == null) {
+                return 0L;
+            }
+
+            balanceCache.put(uuid, balance);
+            return balance;
         }
     }
 
-    private Long getBalance(Connection connection, UUID uuid)
-            throws SQLException {
+    /**
+     * Returns cached balance without database access.
+     * Suitable for PlaceholderAPI and scoreboard updates.
+     */
+    public long getCachedBalance(UUID uuid) {
+        return balanceCache.getOrDefault(uuid, 0L);
+    }
+
+    public void loadBalance(UUID uuid) throws SQLException {
+        getBalance(uuid);
+    }
+
+    public void unloadBalance(UUID uuid) {
+        balanceCache.remove(uuid);
+    }
+
+    private Long getBalance(
+            Connection connection,
+            UUID uuid
+    ) throws SQLException {
 
         String sql = "SELECT balance FROM players WHERE uuid = ?";
 
@@ -96,9 +139,9 @@ public final class CoinManager {
             String description
     ) throws SQLException {
 
-        if (amount <= 0) {
+        if (!CoinValidator.isValidAmount(amount)) {
             throw new IllegalArgumentException(
-                    "Coin amount must be greater than zero."
+                    "Invalid coin amount."
             );
         }
 
@@ -116,9 +159,9 @@ public final class CoinManager {
             String description
     ) throws SQLException {
 
-        if (amount <= 0) {
+        if (!CoinValidator.isValidAmount(amount)) {
             throw new IllegalArgumentException(
-                    "Coin amount must be greater than zero."
+                    "Invalid coin amount."
             );
         }
 
@@ -137,20 +180,15 @@ public final class CoinManager {
             String description
     ) throws SQLException {
 
-        if (amount == 0) {
-            return false;
-        }
-
         try (Connection connection = database.getConnection()) {
 
             connection.setAutoCommit(false);
 
             try {
-                if (referenceId != null) {
-                    if (historyExists(connection, referenceId)) {
-                        connection.rollback();
-                        return false;
-                    }
+                if (referenceId != null
+                        && historyExists(connection, referenceId)) {
+                    connection.rollback();
+                    return false;
                 }
 
                 Long currentBalance = getBalance(connection, uuid);
@@ -164,23 +202,17 @@ public final class CoinManager {
                 long newBalance;
 
                 try {
-                    newBalance = Math.addExact(
+                    newBalance = CoinValidator.calculateNewBalance(
                             currentBalance, amount
                     );
-                } catch (ArithmeticException exception) {
-                    throw new SQLException(
-                            "Coin balance overflow!", exception
-                    );
-                }
-
-                if (newBalance < 0) {
+                } catch (IllegalArgumentException exception) {
                     connection.rollback();
                     return false;
                 }
 
                 String updateSql = """
                         UPDATE players
-                        SET balance = ?, updated_at = ?
+                        SET balance = ?, username = ?, updated_at = ?
                         WHERE uuid = ?
                         """;
 
@@ -188,10 +220,11 @@ public final class CoinManager {
                              connection.prepareStatement(updateSql)) {
 
                     statement.setLong(1, newBalance);
+                    statement.setString(2, username);
                     statement.setLong(
-                            2, System.currentTimeMillis()
+                            3, System.currentTimeMillis()
                     );
-                    statement.setString(3, uuid.toString());
+                    statement.setString(4, uuid.toString());
 
                     if (statement.executeUpdate() != 1) {
                         throw new SQLException(
@@ -210,7 +243,9 @@ public final class CoinManager {
                 try (PreparedStatement statement =
                              connection.prepareStatement(historySql)) {
 
-                    statement.setString(1, UUID.randomUUID().toString());
+                    statement.setString(
+                            1, UUID.randomUUID().toString()
+                    );
                     statement.setString(2, uuid.toString());
                     statement.setLong(3, amount);
                     statement.setString(4, action);
@@ -224,10 +259,12 @@ public final class CoinManager {
                 }
 
                 connection.commit();
+
+                balanceCache.put(uuid, newBalance);
+
                 return true;
 
             } catch (SQLException | RuntimeException exception) {
-
                 connection.rollback();
                 throw exception;
 
@@ -280,5 +317,9 @@ public final class CoinManager {
 
             statement.executeUpdate();
         }
+    }
+
+    public void clearCache() {
+        balanceCache.clear();
     }
 }
