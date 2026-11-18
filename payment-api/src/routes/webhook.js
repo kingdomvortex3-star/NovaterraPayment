@@ -1,261 +1,267 @@
 
-const fs = require("fs");
-const path = require("path");
-const initSqlJs = require("sql.js");
+const crypto = require("crypto");
 
-async function initializeDatabase() {
-    const SQL = await initSqlJs();
-
-    const dataDirectory = path.join(
-        process.cwd(),
-        "data"
-    );
-
-    fs.mkdirSync(dataDirectory, { recursive: true });
-
-    const databasePath = path.join(
-        dataDirectory,
-        "novaterra.db"
-    );
-
-    const temporaryPath = databasePath + ".tmp";
-
-    const database = fs.existsSync(databasePath)
-        ? new SQL.Database(
-            new Uint8Array(fs.readFileSync(databasePath))
-        )
-        : new SQL.Database();
-
-    let transactionDepth = 0;
-
-    function saveDatabase() {
-        const exported = database.export();
-
-        fs.writeFileSync(
-            temporaryPath,
-            Buffer.from(exported)
-        );
-
-        fs.renameSync(temporaryPath, databasePath);
+function safeCompareHex(received, expected) {
+    if (
+        typeof received !== "string" ||
+        !/^[a-f0-9]{128}$/i.test(received)
+    ) {
+        return false;
     }
 
-    database.run("PRAGMA foreign_keys = ON");
+    const first = Buffer.from(received, "hex");
+    const second = Buffer.from(expected, "hex");
 
-    // =====================================
-    // TRANSACTIONS
-    // =====================================
-
-    database.run(`
-        CREATE TABLE IF NOT EXISTS transactions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_id TEXT NOT NULL UNIQUE,
-            player_uuid TEXT NOT NULL,
-            player_name TEXT NOT NULL,
-            coin_amount INTEGER NOT NULL CHECK (coin_amount > 0),
-            payment_amount INTEGER NOT NULL CHECK (payment_amount > 0),
-            payment_method TEXT NOT NULL DEFAULT 'QRIS',
-            transaction_status TEXT NOT NULL DEFAULT 'PENDING',
-            midtrans_transaction_id TEXT,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            paid_at TEXT
-        )
-    `);
-
-    // =====================================
-    // PROCESSED WEBHOOK EVENTS
-    // =====================================
-
-    database.run(`
-        CREATE TABLE IF NOT EXISTS processed_events (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_id TEXT NOT NULL UNIQUE,
-            order_id TEXT NOT NULL,
-            processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    // =====================================
-    // COIN DELIVERY JOBS
-    // =====================================
-
-    database.run(`
-        CREATE TABLE IF NOT EXISTS coin_delivery_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-            order_id TEXT NOT NULL UNIQUE,
-
-            player_uuid TEXT NOT NULL,
-            player_name TEXT NOT NULL,
-
-            coin_amount INTEGER NOT NULL
-                CHECK (coin_amount > 0),
-
-            delivery_status TEXT NOT NULL DEFAULT 'PENDING',
-
-            attempts INTEGER NOT NULL DEFAULT 0,
-
-            last_error TEXT,
-
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            delivered_at TEXT,
-
-            FOREIGN KEY (order_id)
-                REFERENCES transactions(order_id)
-        )
-    `);
-
-    // =====================================
-    // INDEXES
-    // =====================================
-
-    database.run(`
-        CREATE INDEX IF NOT EXISTS
-        idx_transactions_player
-        ON transactions(player_uuid)
-    `);
-
-    database.run(`
-        CREATE INDEX IF NOT EXISTS
-        idx_transactions_status
-        ON transactions(transaction_status)
-    `);
-
-    database.run(`
-        CREATE INDEX IF NOT EXISTS
-        idx_delivery_status
-        ON coin_delivery_jobs(delivery_status)
-    `);
-
-    database.run(`
-        CREATE INDEX IF NOT EXISTS
-        idx_delivery_player
-        ON coin_delivery_jobs(player_uuid)
-    `);
-
-    saveDatabase();
-
-    // =====================================
-    // DATABASE ADAPTER
-    // =====================================
-
-    const db = {
-        prepare(sql) {
-            return {
-                get(...params) {
-                    const statement = database.prepare(sql);
-
-                    try {
-                        statement.bind(params);
-
-                        if (!statement.step()) {
-                            return undefined;
-                        }
-
-                        return statement.getAsObject();
-                    } finally {
-                        statement.free();
-                    }
-                },
-
-                all(...params) {
-                    const statement = database.prepare(sql);
-                    const rows = [];
-
-                    try {
-                        statement.bind(params);
-
-                        while (statement.step()) {
-                            rows.push(statement.getAsObject());
-                        }
-
-                        return rows;
-                    } finally {
-                        statement.free();
-                    }
-                },
-
-                run(...params) {
-                    database.run(sql, params);
-
-                    const result = {
-                        changes: database.getRowsModified(),
-                        lastInsertRowid:
-                            database.exec(
-                                "SELECT last_insert_rowid() AS id"
-                            )[0]?.values[0][0] || 0
-                    };
-
-                    if (transactionDepth === 0) {
-                        saveDatabase();
-                    }
-
-                    return result;
-                }
-            };
-        },
-
-        exec(sql) {
-            database.exec(sql);
-
-            if (transactionDepth === 0) {
-                saveDatabase();
-            }
-        },
-
-        transaction(callback) {
-            return (...args) => {
-                if (transactionDepth !== 0) {
-                    throw new Error(
-                        "Nested database transactions are not supported."
-                    );
-                }
-
-                database.run("BEGIN TRANSACTION");
-                transactionDepth++;
-
-                let result;
-
-                try {
-                    result = callback(...args);
-                    database.run("COMMIT");
-                } catch (error) {
-                    try {
-                        database.run("ROLLBACK");
-                    } catch (rollbackError) {
-                        console.error(
-                            "[NOVATERRA] Rollback error:",
-                            rollbackError.message
-                        );
-                    }
-
-                    transactionDepth = 0;
-                    throw error;
-                }
-
-                transactionDepth = 0;
-
-                // Simpan setelah transaksi berhasil di-commit.
-                saveDatabase();
-
-                return result;
-            };
-        },
-
-        close() {
-            saveDatabase();
-            database.close();
-        }
-    };
-
-    console.log("[NOVATERRA] SQLite database initialized.");
-    console.log("[NOVATERRA] Database: data/novaterra.db");
-    console.log("[NOVATERRA] Transaction table: Ready");
-    console.log("[NOVATERRA] Webhook event table: Ready");
-    console.log("[NOVATERRA] Coin delivery queue: Ready");
-
-    return db;
+    return (
+        first.length === second.length &&
+        crypto.timingSafeEqual(first, second)
+    );
 }
 
-module.exports = initializeDatabase;
+function getPaymentStatus(status, fraudStatus) {
+    switch (status) {
+        case "settlement":
+            return "PAID";
+
+        case "capture":
+            return fraudStatus === "accept" ? "PAID" : null;
+
+        case "pending":
+            return "PENDING";
+
+        case "expire":
+            return "EXPIRED";
+
+        case "cancel":
+            return "CANCELLED";
+
+        case "deny":
+            return "FAILED";
+
+        case "refund":
+        case "chargeback":
+            return "REFUNDED";
+
+        default:
+            return null;
+    }
+}
+
+module.exports = function registerWebhook(app, db) {
+    const serverKey = process.env.MIDTRANS_SERVER_KEY;
+
+    if (!serverKey) {
+        throw new Error("MIDTRANS_SERVER_KEY belum dikonfigurasi.");
+    }
+
+    app.post("/webhook/midtrans", (req, res) => {
+        try {
+            const body = req.body || {};
+
+            const {
+                order_id,
+                status_code,
+                gross_amount,
+                signature_key,
+                transaction_status,
+                fraud_status,
+                transaction_id
+            } = body;
+
+            if (
+                typeof order_id !== "string" ||
+                typeof status_code !== "string" ||
+                typeof gross_amount !== "string" ||
+                typeof signature_key !== "string" ||
+                typeof transaction_status !== "string"
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Notifikasi tidak lengkap."
+                });
+            }
+
+            const signatureInput =
+                order_id +
+                status_code +
+                gross_amount +
+                serverKey;
+
+            const expectedSignature = crypto
+                .createHash("sha512")
+                .update(signatureInput)
+                .digest("hex");
+
+            if (!safeCompareHex(signature_key, expectedSignature)) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Signature tidak valid."
+                });
+            }
+
+            const transaction = db.prepare(`
+                SELECT *
+                FROM transactions
+                WHERE order_id = ?
+            `).get(order_id);
+
+            if (!transaction) {
+                return res.status(404).json({
+                    success: false,
+                    message: "Transaksi tidak ditemukan."
+                });
+            }
+
+            const receivedAmount = Number(gross_amount);
+            const expectedAmount = Number(transaction.payment_amount);
+
+            if (
+                !Number.isFinite(receivedAmount) ||
+                Math.round(receivedAmount * 100) !==
+                Math.round(expectedAmount * 100)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Nominal pembayaran tidak cocok."
+                });
+            }
+
+            const requestedStatus = getPaymentStatus(
+                transaction_status,
+                fraud_status
+            );
+
+            const eventId = crypto
+                .createHash("sha256")
+                .update([
+                    order_id,
+                    transaction_status,
+                    status_code,
+                    gross_amount,
+                    transaction_id || ""
+                ].join(":"))
+                .digest("hex");
+
+            const processEvent = db.transaction(() => {
+                const existingEvent = db.prepare(`
+                    SELECT id
+                    FROM processed_events
+                    WHERE event_id = ?
+                `).get(eventId);
+
+                if (existingEvent) {
+                    return {
+                        processed: false,
+                        status: transaction.transaction_status,
+                        deliveryQueued: false
+                    };
+                }
+
+                db.prepare(`
+                    INSERT INTO processed_events (
+                        event_id,
+                        order_id
+                    )
+                    VALUES (?, ?)
+                `).run(eventId, order_id);
+
+                const currentStatus = transaction.transaction_status;
+                let finalStatus = currentStatus;
+
+                if (requestedStatus === "PAID") {
+                    finalStatus = "PAID";
+                } else if (requestedStatus === "REFUNDED") {
+                    finalStatus = "REFUNDED";
+                } else if (
+                    currentStatus === "PAID" ||
+                    currentStatus === "REFUNDED" ||
+                    currentStatus === "EXPIRED" ||
+                    currentStatus === "CANCELLED" ||
+                    currentStatus === "FAILED"
+                ) {
+                    finalStatus = currentStatus;
+                } else if (requestedStatus) {
+                    finalStatus = requestedStatus;
+                }
+
+                db.prepare(`
+                    UPDATE transactions
+                    SET
+                        transaction_status = ?,
+                        midtrans_transaction_id =
+                            COALESCE(?, midtrans_transaction_id),
+                        updated_at = CURRENT_TIMESTAMP,
+                        paid_at = CASE
+                            WHEN ? = 'PAID'
+                            THEN COALESCE(paid_at, CURRENT_TIMESTAMP)
+                            ELSE paid_at
+                        END
+                    WHERE order_id = ?
+                `).run(
+                    finalStatus,
+                    transaction_id || null,
+                    finalStatus,
+                    order_id
+                );
+
+                let deliveryQueued = false;
+
+                if (finalStatus === "PAID") {
+                    const result = db.prepare(`
+                        INSERT OR IGNORE INTO coin_delivery_jobs (
+                            order_id,
+                            player_uuid,
+                            player_name,
+                            coin_amount,
+                            delivery_status
+                        )
+                        VALUES (?, ?, ?, ?, 'PENDING')
+                    `).run(
+                        transaction.order_id,
+                        transaction.player_uuid,
+                        transaction.player_name,
+                        transaction.coin_amount
+                    );
+
+                    deliveryQueued = result.changes > 0;
+                }
+
+                return {
+                    processed: true,
+                    status: finalStatus,
+                    deliveryQueued
+                };
+            });
+
+            const result = processEvent();
+
+            console.log(
+                "[NOVATERRA] Webhook:",
+                order_id,
+                "=>",
+                result.status,
+                "| Delivery queued:",
+                result.deliveryQueued
+            );
+
+            return res.status(200).json({
+                success: true,
+                processed: result.processed,
+                order_id,
+                status: result.status,
+                delivery_queued: result.deliveryQueued
+            });
+
+        } catch (error) {
+            console.error(
+                "[NOVATERRA] Webhook error:",
+                error.message
+            );
+
+            return res.status(500).json({
+                success: false,
+                message: "Gagal memproses notifikasi."
+            });
+        }
+    });
+};
