@@ -30,19 +30,24 @@ public final class PlayerJoinListener implements Listener {
     public void onPlayerJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
-        // Ambil data saat event berlangsung.
         UUID playerUUID = player.getUniqueId();
         String playerName = player.getName();
 
-        // Proses database di thread asynchronous.
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 coinManager.createAccount(playerUUID, playerName);
                 coinManager.loadBalance(playerUUID);
 
-                plugin.getLogger().info(
-                        "Coin account loaded for " + playerName
-                );
+                Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (Bukkit.getPlayer(playerUUID) == null) {
+                        coinManager.unloadBalance(playerUUID);
+                        return;
+                    }
+
+                    plugin.getLogger().info(
+                            "Coin account loaded for " + playerName
+                    );
+                });
 
             } catch (Exception exception) {
                 plugin.getLogger().log(
