@@ -20,16 +20,11 @@ repositories {
 }
 
 dependencies {
-    // Minecraft API
     compileOnly 'org.spigotmc:spigot-api:26.3-R0.1-SNAPSHOT'
-
-    // PlaceholderAPI
     compileOnly 'me.clip:placeholderapi:2.11.6'
 
-    // SQLite database driver
+    implementation 'com.google.code.gson:gson:2.13.2'
     implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
-
-    // MySQL database driver
     implementation 'com.mysql:mysql-connector-j:9.4.0'
 }
 
