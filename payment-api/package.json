@@ -12,7 +12,8 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
-    "midtrans-client": "^1.4.3"
+    "midtrans-client": "^1.4.3",
+    "better-sqlite3": "^12.4.1"
   },
   "engines": {
     "node": ">=20"
