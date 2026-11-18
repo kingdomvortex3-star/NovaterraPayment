@@ -5,6 +5,7 @@ import id.novaterra.payment.api.CoinAPI;
 import id.novaterra.payment.api.PaymentAPI;
 import id.novaterra.payment.api.PlayerAPI;
 import id.novaterra.payment.database.DatabaseManager;
+import id.novaterra.payment.delivery.DeliveryWorker;
 import id.novaterra.payment.economy.CoinManager;
 import id.novaterra.payment.listeners.PlayerJoinListener;
 import id.novaterra.payment.listeners.PlayerQuitListener;
@@ -34,8 +35,8 @@ public final class NovaTerraPayment extends JavaPlugin {
     private PaymentAPI paymentAPI;
 
     private TransactionLogger transactionLogger;
-
     private NovaTerraExpansion placeholderExpansion;
+    private DeliveryWorker deliveryWorker;
 
     @Override
     public void onEnable() {
@@ -53,6 +54,7 @@ public final class NovaTerraPayment extends JavaPlugin {
             initializeManagers();
             registerListeners();
             registerPlaceholderAPI();
+            initializeDeliveryWorker();
 
             getLogger().info("Database: Enabled");
             getLogger().info("Coin Manager: Enabled");
@@ -69,9 +71,11 @@ public final class NovaTerraPayment extends JavaPlugin {
                     "Failed to initialize NOVATERRA PAYMENT!"
             );
 
-            getLogger().severe(exception.getMessage());
-
-            exception.printStackTrace();
+            getLogger().log(
+                    java.util.logging.Level.SEVERE,
+                    "Initialization error",
+                    exception
+            );
 
             getServer().getPluginManager().disablePlugin(this);
         }
@@ -140,8 +144,27 @@ public final class NovaTerraPayment extends JavaPlugin {
         }
     }
 
+    private void initializeDeliveryWorker() {
+        deliveryWorker = new DeliveryWorker(this, coinManager);
+        deliveryWorker.start();
+    }
+
+    private void restartDeliveryWorker() {
+        if (deliveryWorker != null) {
+            deliveryWorker.stop();
+        }
+
+        deliveryWorker = new DeliveryWorker(this, coinManager);
+        deliveryWorker.start();
+    }
+
     @Override
     public void onDisable() {
+        if (deliveryWorker != null) {
+            deliveryWorker.stop();
+            deliveryWorker = null;
+        }
+
         if (placeholderExpansion != null) {
             placeholderExpansion.unregister();
             placeholderExpansion = null;
@@ -198,6 +221,10 @@ public final class NovaTerraPayment extends JavaPlugin {
         return transactionLogger;
     }
 
+    public DeliveryWorker getDeliveryWorker() {
+        return deliveryWorker;
+    }
+
     @Override
     public boolean onCommand(
             CommandSender sender,
@@ -221,6 +248,7 @@ public final class NovaTerraPayment extends JavaPlugin {
                 && args[0].equalsIgnoreCase("reload")) {
 
             reloadConfig();
+            restartDeliveryWorker();
 
             sender.sendMessage(color(
                     getConfig().getString("messages.prefix", "")
