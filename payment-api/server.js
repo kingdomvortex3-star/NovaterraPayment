@@ -4,12 +4,21 @@ require("dotenv").config();
 const express = require("express");
 const midtransClient = require("midtrans-client");
 
+const db = require("./src/database/database");
+const registerPaymentRoutes = require("./src/routes/payment");
+const registerWebhook = require("./src/routes/webhook");
+
 const app = express();
 
 app.disable("x-powered-by");
 app.use(express.json({ limit: "100kb" }));
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(
+    process.env.SERVER_PORT ||
+    process.env.PORT ||
+    3000
+);
+
 const IS_PRODUCTION =
     process.env.MIDTRANS_IS_PRODUCTION === "true";
 
@@ -17,37 +26,33 @@ const SERVER_KEY = process.env.MIDTRANS_SERVER_KEY;
 const CLIENT_KEY = process.env.MIDTRANS_CLIENT_KEY;
 
 if (!SERVER_KEY || !CLIENT_KEY) {
-    console.error(
-        "[NOVATERRA] Midtrans Server Key atau Client Key belum diatur."
-    );
+    console.error("[NOVATERRA] Midtrans keys belum dikonfigurasi.");
     process.exit(1);
 }
 
-// Inisialisasi Midtrans Snap.
 const snap = new midtransClient.Snap({
     isProduction: IS_PRODUCTION,
     serverKey: SERVER_KEY,
     clientKey: CLIENT_KEY
 });
 
-// Simpan client agar dapat digunakan oleh route berikutnya.
 app.locals.midtrans = snap;
+app.locals.database = db;
 
-// Endpoint pemeriksaan server.
 app.get("/health", (req, res) => {
-    res.status(200).json({
+    res.json({
         success: true,
         project: "NOVATERRA PAYMENT",
         developer: "Vortex Teams",
         status: "online",
-        environment: IS_PRODUCTION
-            ? "production"
-            : "sandbox",
-        timestamp: new Date().toISOString()
+        environment: IS_PRODUCTION ? "production" : "sandbox"
     });
 });
 
-// Endpoint yang tidak dikenal.
+// Daftarkan endpoint pembayaran dan webhook.
+registerPaymentRoutes(app, db);
+registerWebhook(app, db);
+
 app.use((req, res) => {
     res.status(404).json({
         success: false,
@@ -55,20 +60,15 @@ app.use((req, res) => {
     });
 });
 
-// Penanganan error.
 app.use((error, req, res, next) => {
-    console.error(
-        "[NOVATERRA] Server error:",
-        error.message
-    );
-
+    console.error("[NOVATERRA] Error:", error.message);
     res.status(500).json({
         success: false,
         message: "Terjadi kesalahan pada server."
     });
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+const server = app.listen(PORT, "0.0.0.0", () => {
     console.log("====================================");
     console.log("       NOVATERRA PAYMENT API");
     console.log("       Developed by Vortex Teams");
@@ -76,6 +76,18 @@ app.listen(PORT, "0.0.0.0", () => {
     console.log("Port        : " + PORT);
     console.log("Environment : " +
         (IS_PRODUCTION ? "Production" : "Sandbox"));
-    console.log("Midtrans    : Connected client initialized");
+    console.log("Database    : SQLite initialized");
+    console.log("Midtrans    : Initialized");
     console.log("====================================");
 });
+
+function shutdown() {
+    console.log("[NOVATERRA] Shutting down...");
+    server.close(() => {
+        db.close();
+        process.exit(0);
+    });
+}
+
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
