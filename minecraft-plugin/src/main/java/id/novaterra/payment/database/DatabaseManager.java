@@ -5,7 +5,9 @@ import id.novaterra.payment.NovaTerraPayment;
 
 import java.io.File;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Locale;
@@ -158,9 +160,7 @@ public final class DatabaseManager {
     }
 
     private void createTables() throws SQLException {
-
         String[] tables = {
-
                 """
                 CREATE TABLE IF NOT EXISTS players (
                     uuid VARCHAR(36) PRIMARY KEY,
@@ -217,47 +217,69 @@ public final class DatabaseManager {
     }
 
     private void createIndexes() throws SQLException {
+        String[][] indexes = {
+                {"players", "idx_players_username",
+                        "CREATE INDEX idx_players_username ON players(username)"},
 
-        String[] indexes = {
+                {"transactions", "idx_transactions_player",
+                        "CREATE INDEX idx_transactions_player ON transactions(player_uuid)"},
 
-                """
-                CREATE INDEX IF NOT EXISTS
-                idx_transactions_player
-                ON transactions(player_uuid)
-                """,
+                {"transactions", "idx_transactions_status",
+                        "CREATE INDEX idx_transactions_status ON transactions(status)"},
 
-                """
-                CREATE INDEX IF NOT EXISTS
-                idx_transactions_status
-                ON transactions(status)
-                """,
+                {"coin_history", "idx_coin_history_player",
+                        "CREATE INDEX idx_coin_history_player ON coin_history(player_uuid)"},
 
-                """
-                CREATE INDEX IF NOT EXISTS
-                idx_coin_history_player
-                ON coin_history(player_uuid)
-                """,
+                {"coin_history", "idx_coin_history_reference",
+                        "CREATE INDEX idx_coin_history_reference ON coin_history(reference_id)"},
 
-                """
-                CREATE INDEX IF NOT EXISTS
-                idx_coin_history_reference
-                ON coin_history(reference_id)
-                """,
-
-                """
-                CREATE INDEX IF NOT EXISTS
-                idx_processed_events_transaction
-                ON processed_events(transaction_id)
-                """
+                {"processed_events", "idx_processed_events_transaction",
+                        "CREATE INDEX idx_processed_events_transaction ON processed_events(transaction_id)"}
         };
 
         try (Connection connection = getConnection();
              Statement statement = connection.createStatement()) {
 
-            for (String sql : indexes) {
-                statement.executeUpdate(sql);
+            DatabaseMetaData metadata = connection.getMetaData();
+
+            for (String[] index : indexes) {
+                if (!indexExists(
+                        metadata,
+                        connection,
+                        index[0],
+                        index[1]
+                )) {
+                    statement.executeUpdate(index[2]);
+                }
             }
         }
+    }
+
+    private boolean indexExists(
+            DatabaseMetaData metadata,
+            Connection connection,
+            String table,
+            String indexName
+    ) throws SQLException {
+
+        try (ResultSet result = metadata.getIndexInfo(
+                connection.getCatalog(),
+                null,
+                table,
+                false,
+                false
+        )) {
+            while (result.next()) {
+                String existingName = result.getString("INDEX_NAME");
+
+                if (existingName != null
+                        && existingName.equalsIgnoreCase(indexName)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public void close() {
