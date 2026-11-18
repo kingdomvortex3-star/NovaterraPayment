@@ -1,0 +1,47 @@
+
+# ==========================================
+# NOVATERRA PAYMENT
+# Main Configuration
+#
+# Developed by Vortex Teams
+# ==========================================
+
+# Developer Information
+developer:
+  name: "Vortex Teams"
+  project: "NovaTerra Payment"
+  version: "1.0.0"
+
+settings:
+  debug: false
+  language: id
+
+database:
+  type: SQLITE
+
+  sqlite:
+    file: database.db
+
+  mysql:
+    host: localhost
+    port: 3306
+    database: novaterra_payment
+    username: root
+    password: ""
+    ssl: false
+
+api:
+  enabled: false
+  host: "127.0.0.1"
+  port: 8765
+  secret: "CHANGE_THIS_SECRET"
+
+coin:
+  currency-name: "Coin"
+  starting-balance: 0
+
+messages:
+  prefix: "&8[&bNovaTerra&8] "
+  no-permission: "&cKamu tidak memiliki izin!"
+  reload: "&aKonfigurasi berhasil dimuat ulang."
+  player-only: "&cPerintah ini hanya untuk pemain."
