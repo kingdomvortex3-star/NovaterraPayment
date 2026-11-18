@@ -14,7 +14,12 @@ import java.util.concurrent.ConcurrentMap;
 
 public final class CoinManager {
 
-    private static final long MAX_REFERENCE_LENGTH = 64;
+    private static final int MAX_REFERENCE_LENGTH = 64;
+
+    public enum CreditResult {
+        APPLIED,
+        DUPLICATE
+    }
 
     private final NovaTerraPayment plugin;
     private final DatabaseManager database;
@@ -84,7 +89,6 @@ public final class CoinManager {
                 } catch (SQLException | RuntimeException exception) {
                     connection.rollback();
                     throw exception;
-
                 } finally {
                     connection.setAutoCommit(true);
                 }
@@ -93,7 +97,6 @@ public final class CoinManager {
     }
 
     public long getBalance(UUID uuid) throws SQLException {
-
         if (uuid == null) {
             throw new IllegalArgumentException(
                     "Player UUID cannot be null."
@@ -129,7 +132,9 @@ public final class CoinManager {
     }
 
     public void unloadBalance(UUID uuid) {
-        balanceCache.remove(uuid);
+        if (uuid != null) {
+            balanceCache.remove(uuid);
+        }
     }
 
     private long getDatabaseBalance(UUID uuid) throws SQLException {
@@ -146,7 +151,6 @@ public final class CoinManager {
 
         String sql = "SELECT balance FROM players WHERE uuid = ?";
 
-        // MySQL locks the player row until the transaction completes.
         if ("MYSQL".equalsIgnoreCase(database.getDatabaseType())) {
             sql += " FOR UPDATE";
         }
@@ -166,7 +170,33 @@ public final class CoinManager {
         return null;
     }
 
+    /**
+     * Backward-compatible method.
+     * Returns false only when the reference was already processed.
+     * Invalid amounts and database failures throw exceptions.
+     */
     public boolean addCoins(
+            UUID uuid,
+            String username,
+            long amount,
+            String referenceId,
+            String description
+    ) throws SQLException {
+
+        return addCoinsResult(
+                uuid,
+                username,
+                amount,
+                referenceId,
+                description
+        ) == CreditResult.APPLIED;
+    }
+
+    /**
+     * Use this method for automated payment delivery.
+     * DUPLICATE means the order was already credited successfully.
+     */
+    public CreditResult addCoinsResult(
             UUID uuid,
             String username,
             long amount,
@@ -211,10 +241,10 @@ public final class CoinManager {
                 "DEBIT",
                 referenceId,
                 description
-        );
+        ) == CreditResult.APPLIED;
     }
 
-    private synchronized boolean changeBalance(
+    private synchronized CreditResult changeBalance(
             UUID uuid,
             String username,
             long amount,
@@ -224,25 +254,21 @@ public final class CoinManager {
     ) throws SQLException {
 
         validatePlayer(uuid, username);
-
-        if (referenceId != null
-                && (referenceId.isBlank()
-                || referenceId.length() > MAX_REFERENCE_LENGTH)) {
-            throw new IllegalArgumentException(
-                    "Invalid transaction reference."
-            );
-        }
+        validateReference(referenceId);
 
         try (Connection connection = database.getConnection()) {
             connection.setAutoCommit(false);
 
             try {
-                // Register the unique event inside the same transaction.
-                // A duplicate reference cannot credit the balance again.
+                /*
+                 * Register the reference inside the same transaction
+                 * as the balance update.
+                 */
                 if (referenceId != null
                         && !registerReference(connection, referenceId)) {
+
                     connection.rollback();
-                    return false;
+                    return CreditResult.DUPLICATE;
                 }
 
                 Long currentBalance = getBalance(connection, uuid);
@@ -253,7 +279,7 @@ public final class CoinManager {
                     );
                 }
 
-                long newBalance;
+                final long newBalance;
 
                 try {
                     newBalance = CoinValidator.calculateNewBalance(
@@ -261,8 +287,11 @@ public final class CoinManager {
                             amount
                     );
                 } catch (IllegalArgumentException exception) {
-                    connection.rollback();
-                    return false;
+                    throw new SQLException(
+                            "Coin balance limit exceeded for player "
+                                    + uuid,
+                            exception
+                    );
                 }
 
                 String updateSql = """
@@ -329,12 +358,11 @@ public final class CoinManager {
 
                 balanceCache.put(uuid, newBalance);
 
-                return true;
+                return CreditResult.APPLIED;
 
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback();
                 throw exception;
-
             } finally {
                 connection.setAutoCommit(true);
             }
@@ -383,19 +411,37 @@ public final class CoinManager {
         while (current != null) {
             String message = current.getMessage();
             String state = current.getSQLState();
+            int errorCode = current.getErrorCode();
 
-            if ("23505".equals(state)
-                    || current.getErrorCode() == 1062
-                    || (message != null
-                    && (message.contains("UNIQUE constraint failed")
-                    || message.contains("Duplicate entry")))) {
+            if ("23505".equals(state) || errorCode == 1062) {
                 return true;
+            }
+
+            if (message != null) {
+                String normalized = message.toLowerCase();
+
+                if (normalized.contains("unique constraint failed")
+                        || normalized.contains("primary key constraint failed")
+                        || normalized.contains("duplicate entry")) {
+                    return true;
+                }
             }
 
             current = current.getNextException();
         }
 
         return false;
+    }
+
+    private void validateReference(String referenceId) {
+        if (referenceId != null
+                && (referenceId.isBlank()
+                || referenceId.length() > MAX_REFERENCE_LENGTH)) {
+
+            throw new IllegalArgumentException(
+                    "Invalid transaction reference."
+            );
+        }
     }
 
     private void updateUsername(
@@ -434,6 +480,7 @@ public final class CoinManager {
         if (username == null
                 || username.isBlank()
                 || username.length() > 16) {
+
             throw new IllegalArgumentException(
                     "Invalid player username."
             );
