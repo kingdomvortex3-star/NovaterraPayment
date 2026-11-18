@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Locale;
 
 public final class DatabaseManager {
 
@@ -26,23 +27,25 @@ public final class DatabaseManager {
     public void initialize() throws SQLException {
         databaseType = plugin.getConfig()
                 .getString("database.type", "SQLITE")
-                .toUpperCase();
+                .trim()
+                .toUpperCase(Locale.ROOT);
 
-        if (databaseType.equals("SQLITE")) {
-            initializeSQLite();
-        } else if (databaseType.equals("MYSQL")) {
-            initializeMySQL();
-        } else {
-            throw new SQLException(
+        switch (databaseType) {
+            case "SQLITE" -> initializeSQLite();
+            case "MYSQL" -> initializeMySQL();
+            default -> throw new SQLException(
                     "Unsupported database type: " + databaseType
             );
         }
 
         createTables();
+        createIndexes();
 
         plugin.getLogger().info(
                 "Database connected successfully: " + databaseType
         );
+        plugin.getLogger().info("Database tables: Ready");
+        plugin.getLogger().info("Duplicate protection table: Ready");
     }
 
     private void initializeSQLite() throws SQLException {
@@ -50,7 +53,8 @@ public final class DatabaseManager {
             Class.forName("org.sqlite.JDBC");
         } catch (ClassNotFoundException exception) {
             throw new SQLException(
-                    "SQLite JDBC driver not found!", exception
+                    "SQLite JDBC driver not found!",
+                    exception
             );
         }
 
@@ -67,12 +71,24 @@ public final class DatabaseManager {
 
         File databaseFile = new File(folder, filename);
 
-        sqlitePath = "jdbc:sqlite:" + databaseFile.getAbsolutePath();
+        File parent = databaseFile.getParentFile();
+
+        if (parent != null
+                && !parent.exists()
+                && !parent.mkdirs()) {
+            throw new SQLException(
+                    "Cannot create SQLite database directory!"
+            );
+        }
+
+        sqlitePath = "jdbc:sqlite:"
+                + databaseFile.getAbsolutePath();
 
         try (Connection connection = getConnection();
              Statement statement = connection.createStatement()) {
 
             statement.execute("PRAGMA foreign_keys = ON");
+            statement.execute("PRAGMA busy_timeout = 5000");
         }
     }
 
@@ -81,7 +97,8 @@ public final class DatabaseManager {
             Class.forName("com.mysql.cj.jdbc.Driver");
         } catch (ClassNotFoundException exception) {
             throw new SQLException(
-                    "MySQL JDBC driver not found!", exception
+                    "MySQL JDBC driver not found!",
+                    exception
             );
         }
 
@@ -92,7 +109,10 @@ public final class DatabaseManager {
                 .getInt("database.mysql.port", 3306);
 
         String database = plugin.getConfig()
-                .getString("database.mysql.database", "novaterra_payment");
+                .getString(
+                        "database.mysql.database",
+                        "novaterra_payment"
+                );
 
         mysqlUsername = plugin.getConfig()
                 .getString("database.mysql.username", "root");
@@ -103,16 +123,25 @@ public final class DatabaseManager {
         boolean ssl = plugin.getConfig()
                 .getBoolean("database.mysql.ssl", false);
 
-        mysqlUrl = "jdbc:mysql://" + host + ":" + port + "/"
-                + database
+        mysqlUrl = "jdbc:mysql://" + host + ":" + port
+                + "/" + database
                 + "?useSSL=" + ssl
                 + "&serverTimezone=UTC"
                 + "&characterEncoding=UTF-8";
     }
 
     public Connection getConnection() throws SQLException {
+        Connection connection;
+
         if ("SQLITE".equals(databaseType)) {
-            return DriverManager.getConnection(sqlitePath);
+            connection = DriverManager.getConnection(sqlitePath);
+
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("PRAGMA foreign_keys = ON");
+                statement.execute("PRAGMA busy_timeout = 5000");
+            }
+
+            return connection;
         }
 
         if ("MYSQL".equals(databaseType)) {
@@ -123,7 +152,9 @@ public final class DatabaseManager {
             );
         }
 
-        throw new SQLException("Database is not initialized!");
+        throw new SQLException(
+                "Database is not initialized!"
+        );
     }
 
     private void createTables() throws SQLException {
@@ -165,6 +196,14 @@ public final class DatabaseManager {
                     description VARCHAR(255),
                     created_at BIGINT NOT NULL
                 )
+                """,
+
+                """
+                CREATE TABLE IF NOT EXISTS processed_events (
+                    event_id VARCHAR(128) PRIMARY KEY,
+                    transaction_id VARCHAR(64) NOT NULL,
+                    processed_at BIGINT NOT NULL
+                )
                 """
         };
 
@@ -177,8 +216,54 @@ public final class DatabaseManager {
         }
     }
 
+    private void createIndexes() throws SQLException {
+
+        String[] indexes = {
+
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_transactions_player
+                ON transactions(player_uuid)
+                """,
+
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_transactions_status
+                ON transactions(status)
+                """,
+
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_coin_history_player
+                ON coin_history(player_uuid)
+                """,
+
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_coin_history_reference
+                ON coin_history(reference_id)
+                """,
+
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_processed_events_transaction
+                ON processed_events(transaction_id)
+                """
+        };
+
+        try (Connection connection = getConnection();
+             Statement statement = connection.createStatement()) {
+
+            for (String sql : indexes) {
+                statement.executeUpdate(sql);
+            }
+        }
+    }
+
     public void close() {
-        plugin.getLogger().info("Database manager closed.");
+        plugin.getLogger().info(
+                "Database manager closed."
+        );
     }
 
     public String getDatabaseType() {
