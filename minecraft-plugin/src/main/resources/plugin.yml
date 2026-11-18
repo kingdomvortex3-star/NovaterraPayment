@@ -3,8 +3,11 @@ name: NovaTerraPayment
 version: '${version}'
 main: id.novaterra.payment.NovaTerraPayment
 api-version: '26.3'
-author: NovaTerra
+author: Vortex Teams
 description: Automated Minecraft Payment and Coin System
+
+softdepend:
+  - PlaceholderAPI
 
 commands:
   novapayment:
@@ -12,6 +15,7 @@ commands:
     aliases:
       - ntpayment
       - ntp
+    usage: /novapayment [reload]
     permission: novaterra.payment.admin
 
 permissions:
