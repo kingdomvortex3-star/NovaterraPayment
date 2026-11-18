@@ -1,0 +1,20 @@
+
+name: NovaTerraPayment
+version: '${version}'
+main: id.novaterra.payment.NovaTerraPayment
+api-version: '26.3'
+author: NovaTerra
+description: Automated Minecraft Payment and Coin System
+
+commands:
+  novapayment:
+    description: Main NovaTerra Payment command
+    aliases:
+      - ntpayment
+      - ntp
+    permission: novaterra.payment.admin
+
+permissions:
+  novaterra.payment.admin:
+    description: Access to payment administration
+    default: op
