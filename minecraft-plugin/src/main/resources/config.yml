@@ -1,9 +1,4 @@
 
-# ==========================================
-# NOVATERRA PAYMENT
-# Developed by Vortex Teams
-# ==========================================
-
 developer:
   name: "Vortex Teams"
   project: "NOVATERRA PAYMENT"
@@ -11,31 +6,27 @@ developer:
 
 settings:
   debug: false
-  language: id
+  language: "id"
 
 database:
-  type: SQLITE
+  type: "SQLITE"
 
   sqlite:
-    file: database.db
+    file: "database.db"
 
   mysql:
-    host: localhost
+    host: "localhost"
     port: 3306
-    database: novaterra_payment
-    username: root
+    database: "novaterra_payment"
+    username: "root"
     password: ""
     ssl: false
 
 api:
   enabled: false
-
-  # Isi setelah domain HTTPS tersedia.
   url: "https://payment.domain-kamu.com"
-
-  # Samakan dengan secret API setelah sistem autentikasi dibuat.
   secret: "CHANGE_THIS_SECRET"
-
+  server-id: "novaterra-survival"
   connection-timeout: 10000
   read-timeout: 15000
 
@@ -47,12 +38,14 @@ api:
 coin:
   currency-name: "Coin"
   starting-balance: 0
+  max-transaction: 1000000000000
+  max-balance: 9000000000000000
 
 payment:
   provider: "MIDTRANS"
   currency: "IDR"
   enabled-methods:
-    - QRIS
+    - "QRIS"
 
 messages:
   prefix: "&8[&bNovaTerra&8] "
