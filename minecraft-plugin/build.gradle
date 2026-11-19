@@ -1,21 +1,62 @@
+plugins {
+    id 'java'
+    id 'com.gradleup.shadow' version '9.2.2'
+}
 
-pluginManagement {
-    repositories {
-        gradlePluginPortal()
-        mavenCentral()
+group = 'id.novaterra'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+
+    maven {
+        url = 'https://hub.spigotmc.org/nexus/content/groups/public/'
+    }
+
+    maven {
+        url = 'https://repo.extendedclip.com/content/repositories/placeholderapi/'
     }
 }
 
-dependencyResolutionManagement {
-    repositories {
-        mavenCentral()
-        maven {
-            url = 'https://hub.spigotmc.org/nexus/content/groups/public/'
-        }
-        maven {
-            url = 'https://repo.extendedclip.com/content/repositories/placeholderapi/'
-        }
+dependencies {
+    compileOnly 'org.spigotmc:spigot-api:26.3-R0.1-SNAPSHOT'
+    compileOnly 'me.clip:placeholderapi:2.11.6'
+
+    implementation 'com.google.code.gson:gson:2.13.2'
+    implementation 'org.xerial:sqlite-jdbc:3.50.3.0'
+    implementation 'com.mysql:mysql-connector-j:9.4.0'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
     }
 }
 
-rootProject.name = 'NovaTerraPayment'
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+processResources {
+    filteringCharset = 'UTF-8'
+
+    filesMatching('plugin.yml') {
+        expand(version: project.version)
+    }
+}
+
+shadowJar {
+    archiveBaseName = 'NovaTerraPayment'
+    archiveClassifier = ''
+
+    mergeServiceFiles()
+}
+
+tasks.jar {
+    enabled = false
+}
+
+tasks.assemble {
+    dependsOn tasks.shadowJar
+}
