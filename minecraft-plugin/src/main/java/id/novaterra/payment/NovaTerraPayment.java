@@ -11,12 +11,14 @@ import id.novaterra.payment.listeners.PlayerJoinListener;
 import id.novaterra.payment.listeners.PlayerQuitListener;
 import id.novaterra.payment.placeholder.NovaTerraExpansion;
 import id.novaterra.payment.player.PlayerManager;
+import id.novaterra.payment.player.commands.CoinAdminCommand;
 import id.novaterra.payment.transaction.TransactionLogger;
 import id.novaterra.payment.transaction.TransactionManager;
 
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.sql.SQLException;
@@ -52,6 +54,7 @@ public final class NovaTerraPayment extends JavaPlugin {
         try {
             initializeDatabase();
             initializeManagers();
+            registerCommands();
             registerListeners();
             registerPlaceholderAPI();
             initializeDeliveryWorker();
@@ -60,6 +63,7 @@ public final class NovaTerraPayment extends JavaPlugin {
             getLogger().info("Coin Manager: Enabled");
             getLogger().info("Player Manager: Enabled");
             getLogger().info("Transaction Manager: Enabled");
+            getLogger().info("Commands: Registered");
             getLogger().info("Listeners: Registered");
 
             getLogger().info("======================================");
@@ -88,13 +92,10 @@ public final class NovaTerraPayment extends JavaPlugin {
 
     private void initializeManagers() {
         coinManager = new CoinManager(this, databaseManager);
-
         playerManager = new PlayerManager(databaseManager);
-
         transactionManager = new TransactionManager(databaseManager);
 
         coinAPI = new CoinAPI(coinManager);
-
         playerAPI = new PlayerAPI(databaseManager);
 
         paymentAPI = new PaymentAPI(
@@ -103,6 +104,20 @@ public final class NovaTerraPayment extends JavaPlugin {
         );
 
         transactionLogger = new TransactionLogger(this);
+    }
+
+    private void registerCommands() {
+        PluginCommand coinCommand = getCommand("coinadmin");
+
+        if (coinCommand == null) {
+            throw new IllegalStateException(
+                    "Command coinadmin is missing from plugin.yml!"
+            );
+        }
+
+        coinCommand.setExecutor(
+                new CoinAdminCommand(this, coinManager)
+        );
     }
 
     private void registerListeners() {
@@ -265,7 +280,6 @@ public final class NovaTerraPayment extends JavaPlugin {
         sender.sendMessage(color("&7Developer: &fVortex Teams"));
         sender.sendMessage(color("&7Version: &f"
                 + getDescription().getVersion()));
-
         sender.sendMessage(color("&7Command: &f/novapayment reload"));
 
         return true;
