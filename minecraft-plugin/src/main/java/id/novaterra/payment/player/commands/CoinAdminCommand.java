@@ -49,7 +49,15 @@ public final class CoinAdminCommand implements CommandExecutor {
         String action = args[0].toLowerCase();
         String targetName = args[1];
 
+        if (!action.equals("give")
+                && !action.equals("take")
+                && !action.equals("set")) {
+            sender.sendMessage(color("&cAksi tidak dikenal."));
+            return true;
+        }
+
         long amount;
+
         try {
             amount = Long.parseLong(args[2]);
         } catch (NumberFormatException exception) {
@@ -71,50 +79,77 @@ public final class CoinAdminCommand implements CommandExecutor {
 
         UUID uuid = target.getUniqueId();
 
+        String username = target.getName() != null
+                ? target.getName()
+                : targetName;
+
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                switch (action) {
-                    case "give" ->
-                            coinManager.addCoins(
-                                    uuid, amount,
-                                    "ADMIN_GIVE", "Admin command"
-                            );
+                // Pastikan akun Coin sudah tersedia.
+                coinManager.createAccount(uuid, username);
 
-                    case "take" ->
-                            coinManager.removeCoins(
-                                    uuid, amount,
-                                    "ADMIN_TAKE", "Admin command"
-                            );
+                String referenceId = "ADMIN_" + UUID.randomUUID();
+                String description = "Admin command: " + action;
+
+                boolean success = true;
+
+                switch (action) {
+                    case "give" -> success = coinManager.addCoins(
+                            uuid,
+                            username,
+                            amount,
+                            referenceId,
+                            description
+                    );
+
+                    case "take" -> success = coinManager.removeCoins(
+                            uuid,
+                            username,
+                            amount,
+                            referenceId,
+                            description
+                    );
 
                     case "set" -> {
                         long current = coinManager.getBalance(uuid);
                         long difference = amount - current;
 
                         if (difference > 0) {
-                            coinManager.addCoins(
-                                    uuid, difference,
-                                    "ADMIN_SET", "Admin set balance"
+                            success = coinManager.addCoins(
+                                    uuid,
+                                    username,
+                                    difference,
+                                    referenceId,
+                                    description
                             );
                         } else if (difference < 0) {
-                            coinManager.removeCoins(
-                                    uuid, Math.abs(difference),
-                                    "ADMIN_SET", "Admin set balance"
+                            success = coinManager.removeCoins(
+                                    uuid,
+                                    username,
+                                    -difference,
+                                    referenceId,
+                                    description
                             );
                         }
                     }
-
-                    default -> {
-                        sender.sendMessage(color("&cAksi tidak dikenal."));
-                        return;
-                    }
                 }
 
+                final boolean result = success;
+
                 Bukkit.getScheduler().runTask(plugin, () -> {
+                    if (!result) {
+                        sender.sendMessage(color(
+                                "&cTransaksi Coin gagal atau terdeteksi duplikat."
+                        ));
+                        return;
+                    }
+
                     sender.sendMessage(color(
-                            "&aBerhasil menjalankan " + action
-                            + " Coin untuk &e" + targetName
+                            "&aBerhasil menjalankan &e" + action
+                            + " &auntuk &e" + username
                             + " &asebanyak &e"
-                            + String.format("%,d", amount) + " Coin."
+                            + String.format("%,d", amount)
+                            + " Coin."
                     ));
                 });
 
