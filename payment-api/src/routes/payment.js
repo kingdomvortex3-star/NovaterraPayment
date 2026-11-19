@@ -5,22 +5,22 @@ const COIN_PACKAGES = Object.freeze({
     starter: {
         name: "Starter",
         price: 5000,
-        coins: 500
+        coins: 550
     },
     basic: {
         name: "Basic",
         price: 10000,
-        coins: 1100
+        coins: 1150
     },
     premium: {
         name: "Premium",
         price: 20000,
-        coins: 2300
+        coins: 2350
     },
     ultimate: {
         name: "Ultimate",
         price: 50000,
-        coins: 6000
+        coins: 5750
     }
 });
 
@@ -134,8 +134,8 @@ module.exports = function registerPaymentRoutes(app, db) {
                     first_name: playerName
                 },
 
-                // QRIS khusus melalui Other QRIS.
-                // Pastikan Other QRIS sudah aktif di dashboard Midtrans.
+                // QRIS melalui Other QRIS.
+                // Metode ini harus aktif di dashboard Midtrans.
                 enabled_payments: ["other_qris"]
             };
 
@@ -168,7 +168,11 @@ module.exports = function registerPaymentRoutes(app, db) {
 
             console.log(
                 "[NOVATERRA] Invoice created:",
-                orderId
+                orderId,
+                "| Package:",
+                packageId,
+                "| Coins:",
+                selectedPackage.coins
             );
 
             return res.status(201).json({
