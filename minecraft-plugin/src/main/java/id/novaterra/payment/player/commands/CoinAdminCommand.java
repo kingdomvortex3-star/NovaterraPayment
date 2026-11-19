@@ -1,5 +1,5 @@
 
-package id.novaterra.payment.commands;
+package id.novaterra.payment.player.commands;
 
 import id.novaterra.payment.NovaTerraPayment;
 import id.novaterra.payment.economy.CoinManager;
@@ -61,12 +61,12 @@ public final class CoinAdminCommand implements CommandExecutor {
         try {
             amount = Long.parseLong(args[2]);
         } catch (NumberFormatException exception) {
-            sender.sendMessage(color("&cJumlah Coin harus berupa angka."));
+            sender.sendMessage(color("&cJumlah Coin tidak valid."));
             return true;
         }
 
         if (amount <= 0) {
-            sender.sendMessage(color("&cJumlah Coin harus lebih dari 0."));
+            sender.sendMessage(color("&cJumlah harus lebih dari 0."));
             return true;
         }
 
@@ -85,10 +85,9 @@ public final class CoinAdminCommand implements CommandExecutor {
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
-                // Pastikan akun Coin sudah tersedia.
                 coinManager.createAccount(uuid, username);
 
-                String referenceId = "ADMIN_" + UUID.randomUUID();
+                String reference = "ADMIN_" + UUID.randomUUID();
                 String description = "Admin command: " + action;
 
                 boolean success = true;
@@ -98,7 +97,7 @@ public final class CoinAdminCommand implements CommandExecutor {
                             uuid,
                             username,
                             amount,
-                            referenceId,
+                            reference,
                             description
                     );
 
@@ -106,7 +105,7 @@ public final class CoinAdminCommand implements CommandExecutor {
                             uuid,
                             username,
                             amount,
-                            referenceId,
+                            reference,
                             description
                     );
 
@@ -119,7 +118,7 @@ public final class CoinAdminCommand implements CommandExecutor {
                                     uuid,
                                     username,
                                     difference,
-                                    referenceId,
+                                    reference,
                                     description
                             );
                         } else if (difference < 0) {
@@ -127,36 +126,33 @@ public final class CoinAdminCommand implements CommandExecutor {
                                     uuid,
                                     username,
                                     -difference,
-                                    referenceId,
+                                    reference,
                                     description
                             );
                         }
                     }
                 }
 
-                final boolean result = success;
+                boolean result = success;
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
                     if (!result) {
                         sender.sendMessage(color(
-                                "&cTransaksi Coin gagal atau terdeteksi duplikat."
+                                "&cTransaksi gagal atau reference duplikat."
                         ));
                         return;
                     }
 
                     sender.sendMessage(color(
-                            "&aBerhasil menjalankan &e" + action
-                            + " &auntuk &e" + username
-                            + " &asebanyak &e"
-                            + String.format("%,d", amount)
-                            + " Coin."
+                            "&aBerhasil " + action
+                            + " &e" + String.format("%,d", amount)
+                            + " Coin &auntuk &e" + username
                     ));
                 });
 
             } catch (Exception exception) {
                 plugin.getLogger().severe(
-                        "Coin admin command failed: "
-                        + exception.getMessage()
+                        "Coin admin error: " + exception.getMessage()
                 );
 
                 Bukkit.getScheduler().runTask(plugin, () ->
