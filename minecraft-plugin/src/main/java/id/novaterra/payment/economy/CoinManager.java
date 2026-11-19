@@ -35,68 +35,77 @@ public final class CoinManager {
         this.database = database;
     }
 
-    public void createAccount(UUID uuid, String username)
-            throws SQLException {
+    /**
+     * Creates a player account if it does not exist.
+     * Uses the same lock as balance transactions.
+     */
+    public synchronized void createAccount(
+            UUID uuid,
+            String username
+    ) throws SQLException {
 
         validatePlayer(uuid, username);
 
-        synchronized (balanceCache) {
-            try (Connection connection = database.getConnection()) {
-                connection.setAutoCommit(false);
+        try (Connection connection = database.getConnection()) {
+            connection.setAutoCommit(false);
 
-                try {
-                    Long balance = getBalance(connection, uuid);
+            try {
+                Long balance = getBalance(connection, uuid);
 
-                    if (balance != null) {
-                        updateUsername(connection, uuid, username);
-                        connection.commit();
-                        balanceCache.put(uuid, balance);
-                        return;
-                    }
-
-                    long startingBalance = plugin.getConfig()
-                            .getLong("coin.starting-balance", 0);
-
-                    if (!CoinValidator.isValidBalance(startingBalance)) {
-                        throw new SQLException(
-                                "Invalid starting balance!"
-                        );
-                    }
-
-                    long now = System.currentTimeMillis();
-
-                    String sql = """
-                            INSERT INTO players
-                            (uuid, username, balance, created_at, updated_at)
-                            VALUES (?, ?, ?, ?, ?)
-                            """;
-
-                    try (PreparedStatement statement =
-                                 connection.prepareStatement(sql)) {
-
-                        statement.setString(1, uuid.toString());
-                        statement.setString(2, username);
-                        statement.setLong(3, startingBalance);
-                        statement.setLong(4, now);
-                        statement.setLong(5, now);
-
-                        statement.executeUpdate();
-                    }
-
+                if (balance != null) {
+                    updateUsername(connection, uuid, username);
                     connection.commit();
-                    balanceCache.put(uuid, startingBalance);
-
-                } catch (SQLException | RuntimeException exception) {
-                    connection.rollback();
-                    throw exception;
-                } finally {
-                    connection.setAutoCommit(true);
+                    balanceCache.put(uuid, balance);
+                    return;
                 }
+
+                long startingBalance = plugin.getConfig()
+                        .getLong("coin.starting-balance", 0);
+
+                if (!CoinValidator.isValidBalance(startingBalance)) {
+                    throw new SQLException(
+                            "Invalid starting balance!"
+                    );
+                }
+
+                long now = System.currentTimeMillis();
+
+                String sql = """
+                        INSERT INTO players
+                        (uuid, username, balance, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """;
+
+                try (PreparedStatement statement =
+                             connection.prepareStatement(sql)) {
+
+                    statement.setString(1, uuid.toString());
+                    statement.setString(2, username);
+                    statement.setLong(3, startingBalance);
+                    statement.setLong(4, now);
+                    statement.setLong(5, now);
+
+                    statement.executeUpdate();
+                }
+
+                connection.commit();
+                balanceCache.put(uuid, startingBalance);
+
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
             }
         }
     }
 
-    public long getBalance(UUID uuid) throws SQLException {
+    /**
+     * Gets the player's current balance.
+     */
+    public synchronized long getBalance(UUID uuid)
+            throws SQLException {
+
         if (uuid == null) {
             throw new IllegalArgumentException(
                     "Player UUID cannot be null."
@@ -121,29 +130,48 @@ public final class CoinManager {
         }
     }
 
-    public long getCachedBalance(UUID uuid) {
+    /**
+     * Gets balance from cache only.
+     */
+    public synchronized long getCachedBalance(UUID uuid) {
         return balanceCache.getOrDefault(uuid, 0L);
     }
 
-    public void loadBalance(UUID uuid) throws SQLException {
+    /**
+     * Loads balance from database into cache.
+     */
+    public synchronized void loadBalance(UUID uuid)
+            throws SQLException {
+
         if (uuid != null) {
-            balanceCache.put(uuid, getDatabaseBalance(uuid));
+            balanceCache.put(
+                    uuid,
+                    getDatabaseBalance(uuid)
+            );
         }
     }
 
-    public void unloadBalance(UUID uuid) {
+    /**
+     * Removes player balance from cache.
+     */
+    public synchronized void unloadBalance(UUID uuid) {
         if (uuid != null) {
             balanceCache.remove(uuid);
         }
     }
 
-    private long getDatabaseBalance(UUID uuid) throws SQLException {
+    private long getDatabaseBalance(UUID uuid)
+            throws SQLException {
+
         try (Connection connection = database.getConnection()) {
             Long balance = getBalance(connection, uuid);
             return balance == null ? 0L : balance;
         }
     }
 
+    /**
+     * Reads balance using an existing connection.
+     */
     private Long getBalance(
             Connection connection,
             UUID uuid
@@ -151,7 +179,9 @@ public final class CoinManager {
 
         String sql = "SELECT balance FROM players WHERE uuid = ?";
 
-        if ("MYSQL".equalsIgnoreCase(database.getDatabaseType())) {
+        if ("MYSQL".equalsIgnoreCase(
+                database.getDatabaseType()
+        )) {
             sql += " FOR UPDATE";
         }
 
@@ -193,8 +223,7 @@ public final class CoinManager {
     }
 
     /**
-     * Use this method for automated payment delivery.
-     * DUPLICATE means the order was already credited successfully.
+     * Adds Coin and returns an explicit result.
      */
     public CreditResult addCoinsResult(
             UUID uuid,
@@ -220,6 +249,9 @@ public final class CoinManager {
         );
     }
 
+    /**
+     * Removes Coin from a player.
+     */
     public boolean removeCoins(
             UUID uuid,
             String username,
@@ -244,6 +276,9 @@ public final class CoinManager {
         ) == CreditResult.APPLIED;
     }
 
+    /**
+     * Updates balance, history, and processed event atomically.
+     */
     private synchronized CreditResult changeBalance(
             UUID uuid,
             String username,
@@ -261,17 +296,23 @@ public final class CoinManager {
 
             try {
                 /*
-                 * Register the reference inside the same transaction
-                 * as the balance update.
+                 * Register reference in the same transaction.
+                 * A duplicate reference must never credit Coin twice.
                  */
                 if (referenceId != null
-                        && !registerReference(connection, referenceId)) {
+                        && !registerReference(
+                                connection,
+                                referenceId
+                        )) {
 
                     connection.rollback();
                     return CreditResult.DUPLICATE;
                 }
 
-                Long currentBalance = getBalance(connection, uuid);
+                Long currentBalance = getBalance(
+                        connection,
+                        uuid
+                );
 
                 if (currentBalance == null) {
                     throw new SQLException(
@@ -369,6 +410,9 @@ public final class CoinManager {
         }
     }
 
+    /**
+     * Registers a unique payment reference.
+     */
     private boolean registerReference(
             Connection connection,
             String referenceId
@@ -405,6 +449,9 @@ public final class CoinManager {
         }
     }
 
+    /**
+     * Detects actual unique constraint violations.
+     */
     private boolean isDuplicateKey(SQLException exception) {
         SQLException current = exception;
 
@@ -413,7 +460,9 @@ public final class CoinManager {
             String state = current.getSQLState();
             int errorCode = current.getErrorCode();
 
-            if ("23505".equals(state) || errorCode == 1062) {
+            if ("23505".equals(state)
+                    || errorCode == 1062
+                    || errorCode == 19) {
                 return true;
             }
 
@@ -444,6 +493,9 @@ public final class CoinManager {
         }
     }
 
+    /**
+     * Updates an existing player's username.
+     */
     private void updateUsername(
             Connection connection,
             UUID uuid,
@@ -470,7 +522,10 @@ public final class CoinManager {
         }
     }
 
-    private void validatePlayer(UUID uuid, String username) {
+    private void validatePlayer(
+            UUID uuid,
+            String username
+    ) {
         if (uuid == null) {
             throw new IllegalArgumentException(
                     "Player UUID cannot be null."
@@ -487,7 +542,10 @@ public final class CoinManager {
         }
     }
 
-    public void clearCache() {
+    /**
+     * Clears all cached player balances.
+     */
+    public synchronized void clearCache() {
         balanceCache.clear();
     }
 }
