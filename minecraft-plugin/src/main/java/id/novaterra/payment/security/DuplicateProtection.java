@@ -16,12 +16,6 @@ public final class DuplicateProtection {
         this.database = database;
     }
 
-    /**
-     * Registers an event exactly once.
-     *
-     * Returns true if this event is new.
-     * Returns false if this event was already registered.
-     */
     public boolean registerEvent(
             String eventId,
             String transactionId
@@ -45,14 +39,11 @@ public final class DuplicateProtection {
 
             statement.setString(1, eventId);
             statement.setString(2, transactionId);
-            statement.setLong(
-                    3, System.currentTimeMillis()
-            );
+            statement.setLong(3, System.currentTimeMillis());
 
             return statement.executeUpdate() == 1;
 
         } catch (SQLException exception) {
-
             if (isUniqueConstraintViolation(exception)) {
                 return false;
             }
@@ -84,20 +75,21 @@ public final class DuplicateProtection {
         }
     }
 
-    private boolean isUniqueConstraintViolation(
-            SQLException exception
-    ) {
-
+    private boolean isUniqueConstraintViolation(SQLException exception) {
         SQLException current = exception;
 
         while (current != null) {
-
             String state = current.getSQLState();
+            int code = current.getErrorCode();
+            String message = current.getMessage();
 
             if ("23505".equals(state)
-                    || "23000".equals(state)
-                    || current.getErrorCode() == 1062
-                    || current.getErrorCode() == 19) {
+                    || code == 1062
+                    || code == 1555
+                    || code == 2067
+                    || (message != null
+                    && (message.contains("UNIQUE constraint failed")
+                    || message.contains("PRIMARY KEY constraint failed")))) {
                 return true;
             }
 
@@ -108,14 +100,8 @@ public final class DuplicateProtection {
     }
 
     private void validate(String value, String field) {
-
-        if (value == null
-                || value.isBlank()
-                || value.length() > 128) {
-
-            throw new IllegalArgumentException(
-                    field + " is invalid."
-            );
+        if (value == null || value.isBlank() || value.length() > 128) {
+            throw new IllegalArgumentException(field + " is invalid.");
         }
     }
 }
