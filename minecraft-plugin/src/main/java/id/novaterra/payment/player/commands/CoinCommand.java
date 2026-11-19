@@ -7,7 +7,6 @@ import id.novaterra.payment.economy.CoinManager;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.OfflinePlayer;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -21,9 +20,10 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CoinCommand implements CommandExecutor, Listener {
 
@@ -38,6 +38,10 @@ public final class CoinCommand implements CommandExecutor, Listener {
         this.coinManager = coinManager;
     }
 
+    // ==========================================
+    // COMMAND
+    // ==========================================
+
     @Override
     public boolean onCommand(
             CommandSender sender,
@@ -50,15 +54,13 @@ public final class CoinCommand implements CommandExecutor, Listener {
             return true;
         }
 
-        if (args.length == 1
-                && args[0].equalsIgnoreCase("reload")) {
-            player.sendMessage(color("&cGunakan /novapayment reload untuk reload plugin."));
-            return true;
-        }
-
         openMainMenu(player);
         return true;
     }
+
+    // ==========================================
+    // MAIN COIN MARKET
+    // ==========================================
 
     private void openMainMenu(Player player) {
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -69,11 +71,14 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         player.getUniqueId(),
                         player.getName()
                 );
-                balance = coinManager.getBalance(player.getUniqueId());
+
+                balance = coinManager.getBalance(
+                        player.getUniqueId()
+                );
+
             } catch (Exception exception) {
                 plugin.getLogger().severe(
-                        "Failed to load Coin balance for "
-                                + player.getName() + ": "
+                        "Failed to load Coin balance: "
                                 + exception.getMessage()
                 );
 
@@ -88,46 +93,101 @@ public final class CoinCommand implements CommandExecutor, Listener {
             long finalBalance = balance;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                if (!player.isOnline()) {
-                    return;
-                }
+                if (!player.isOnline()) return;
 
-                CoinHolder holder = new CoinHolder(MenuType.MAIN, null);
+                CoinHolder holder = new CoinHolder(MenuType.MAIN);
+
                 Inventory inventory = Bukkit.createInventory(
                         holder,
-                        27,
-                        color("&8NOVATERRA &bCOIN MARKET")
+                        45,
+                        color("&8ᴄᴏɪɴ ᴍᴀʀᴋᴇᴛ &8| &bɴᴏᴠᴀᴛᴇʀʀᴀ")
                 );
+
                 holder.setInventory(inventory);
 
+                // BALANCE
                 inventory.setItem(4, item(
                         Material.GOLD_INGOT,
-                        "&e&lSALDO COIN",
+                        "&6&lᴍʏ ᴄᴏɪɴ ʙᴀʟᴀɴᴄᴇ",
                         List.of(
-                                "&7Saldo Coin kamu:",
-                                "&e" + format(finalBalance) + " Coin",
+                                "&7Your current balance:",
                                 "",
-                                "&8NOVATERRA PAYMENT"
+                                "&e✦ &f" + format(finalBalance) + " ᴄᴏɪɴ",
+                                "",
+                                "&8ᴘᴀʏᴍᴇɴᴛ ᴡᴀʟʟᴇᴛ"
                         )
                 ));
 
-                inventory.setItem(11, item(
-                        Material.NETHER_STAR,
-                        "&b&lRANK",
+                // RANK
+                inventory.setItem(20, item(
+                        Material.DIAMOND_BLOCK,
+                        "&b&lʀᴀɴᴋ ѕʜᴏᴘ",
                         List.of(
-                                "&7Beli rank menggunakan Coin.",
+                                "&7Unlock exclusive server ranks.",
                                 "",
-                                "&eKlik untuk melihat daftar rank."
+                                "&b✦ &f9 Exclusive Ranks",
+                                "&b✦ &fPermanent Rank Benefits",
+                                "",
+                                "&e➜ Click to browse ranks"
                         )
                 ));
 
-                inventory.setItem(15, item(
+                // CLAIM BLOCK
+                inventory.setItem(22, item(
+                        Material.EMERALD_BLOCK,
+                        "&a&lᴄʟᴀɪᴍ ʙʟᴏᴄᴋ",
+                        List.of(
+                                "&7Protect your land with Claim Blocks.",
+                                "",
+                                "&a✦ &fFuture Marketplace Category",
+                                "",
+                                "&c✘ &lCOMING SOON",
+                                "",
+                                "&e➜ Click for information"
+                        )
+                ));
+
+                // PETS
+                inventory.setItem(24, item(
+                        Material.CREEPER_SPAWN_EGG,
+                        "&d&lᴘᴇᴛѕ ѕʜᴏᴘ",
+                        List.of(
+                                "&7Find your own loyal companions.",
+                                "",
+                                "&d✦ &fFuture Marketplace Category",
+                                "",
+                                "&c✘ &lCOMING SOON",
+                                "",
+                                "&e➜ Click for information"
+                        )
+                ));
+
+                // COSMETIC
+                inventory.setItem(31, item(
+                        Material.AMETHYST_SHARD,
+                        "&5&lᴄᴏѕᴍᴇᴛɪᴄ ѕʜᴏᴘ",
+                        List.of(
+                                "&7Customize your character.",
+                                "",
+                                "&5✦ &fFuture Marketplace Category",
+                                "",
+                                "&c✘ &lCOMING SOON",
+                                "",
+                                "&e➜ Click for information"
+                        )
+                ));
+
+                // COIN TOP UP INFORMATION
+                inventory.setItem(40, item(
                         Material.SUNFLOWER,
-                        "&a&lCOIN MARKET",
+                        "&e&lᴛᴏᴘ ᴜᴘ ᴄᴏɪɴ",
                         List.of(
-                                "&7Top up Coin melalui Discord.",
+                                "&7Need more Coins?",
                                 "",
-                                "&eLihat channel Coin Market Discord."
+                                "&ePurchase Coins through",
+                                "&eour official Discord store.",
+                                "",
+                                "&bᴅɪѕᴄᴏʀᴅ: &fNOVATERRA"
                         )
                 ));
 
@@ -137,7 +197,21 @@ public final class CoinCommand implements CommandExecutor, Listener {
         });
     }
 
+    // ==========================================
+    // RANK SHOP
+    // ==========================================
+
     private void openRankMenu(Player player) {
+        if (!plugin.getConfig().getBoolean(
+                "rank-shop.enabled",
+                true
+        )) {
+            player.sendMessage(color(
+                    "&cRank Shop sedang dinonaktifkan."
+            ));
+            return;
+        }
+
         var section = plugin.getConfig()
                 .getConfigurationSection("rank-shop.ranks");
 
@@ -148,12 +222,14 @@ public final class CoinCommand implements CommandExecutor, Listener {
             return;
         }
 
-        CoinHolder holder = new CoinHolder(MenuType.RANKS, null);
+        CoinHolder holder = new CoinHolder(MenuType.RANKS);
+
         Inventory inventory = Bukkit.createInventory(
                 holder,
                 54,
-                color("&8NOVATERRA &bRANK SHOP")
+                color("&8ʀᴀɴᴋ ѕʜᴏᴘ &8| &bɴᴏᴠᴀᴛᴇʀʀᴀ")
         );
+
         holder.setInventory(inventory);
 
         int[] slots = {
@@ -164,33 +240,39 @@ public final class CoinCommand implements CommandExecutor, Listener {
         int index = 0;
 
         for (String rankId : section.getKeys(false)) {
-            if (index >= slots.length) {
-                break;
-            }
+            if (index >= slots.length) break;
 
             String path = "rank-shop.ranks." + rankId;
+
             String name = plugin.getConfig().getString(
                     path + ".name",
                     rankId
             );
+
             long price = plugin.getConfig().getLong(
                     path + ".price",
                     0L
             );
 
-            if (price <= 0) {
-                continue;
-            }
+            if (price <= 0) continue;
+
+            Material icon = getRankIcon(rankId);
 
             inventory.setItem(
                     slots[index],
                     item(
-                            Material.DIAMOND,
-                            "&b&l" + name,
+                            icon,
+                            getRankColor(rankId) + "&l" + smallCaps(name),
                             List.of(
-                                    "&7Harga: &e" + format(price) + " Coin",
+                                    "&8━━━━━━━━━━━━━━━━",
+                                    "&7Rank: " + getRankColor(rankId) + name,
+                                    "&7Price: &e" + format(price) + " Coin",
                                     "",
-                                    "&aKlik untuk membeli rank."
+                                    "&a✦ &fExclusive Rank",
+                                    "&a✦ &fPermanent Benefits",
+                                    "",
+                                    "&e➜ Click to purchase",
+                                    "&8━━━━━━━━━━━━━━━━"
                             )
                     )
             );
@@ -201,13 +283,108 @@ public final class CoinCommand implements CommandExecutor, Listener {
 
         inventory.setItem(49, item(
                 Material.ARROW,
-                "&cKEMBALI",
-                List.of("&7Kembali ke menu utama.")
+                "&c&lʙᴀᴄᴋ",
+                List.of(
+                        "&7Return to Coin Market."
+                )
+        ));
+
+        inventory.setItem(4, item(
+                Material.NETHER_STAR,
+                "&b&lᴇxᴄʟᴜѕɪᴠᴇ ʀᴀɴᴋѕ",
+                List.of(
+                        "&7Choose your desired rank.",
+                        "",
+                        "&e9 Ranks Available"
+                )
         ));
 
         fillEmpty(inventory);
         player.openInventory(inventory);
     }
+
+    // ==========================================
+    // RANK ICONS
+    // ==========================================
+
+    private Material getRankIcon(String rankId) {
+        return switch (rankId.toLowerCase()) {
+            case "donatur" -> Material.NETHERITE_INGOT;
+            case "ascendance" -> Material.DIAMOND;
+            case "sovereign" -> Material.EMERALD;
+            case "immortal" -> Material.GOLD_INGOT;
+            case "duke" -> Material.IRON_INGOT;
+            case "viscount" -> Material.COPPER_INGOT;
+            case "baron" -> Material.LAPIS_LAZULI;
+            case "knight" -> Material.REDSTONE;
+            case "peasant" -> Material.COAL;
+            default -> Material.RAW_IRON;
+        };
+    }
+
+    private String getRankColor(String rankId) {
+        return switch (rankId.toLowerCase()) {
+            case "donatur" -> "&6";
+            case "ascendance" -> "&b";
+            case "sovereign" -> "&a";
+            case "immortal" -> "&e";
+            case "duke" -> "&f";
+            case "viscount" -> "&6";
+            case "baron" -> "&9";
+            case "knight" -> "&c";
+            case "peasant" -> "&7";
+            default -> "&f";
+        };
+    }
+
+    // ==========================================
+    // COMING SOON MENU
+    // ==========================================
+
+    private void openComingSoonMenu(
+            Player player,
+            String category,
+            Material icon,
+            String description
+    ) {
+        CoinHolder holder = new CoinHolder(MenuType.COMING_SOON);
+
+        Inventory inventory = Bukkit.createInventory(
+                holder,
+                27,
+                color("&8ᴍᴀʀᴋᴇᴛᴘʟᴀᴄᴇ &8| &cᴄᴏᴍɪɴɢ ѕᴏᴏɴ")
+        );
+
+        holder.setInventory(inventory);
+
+        inventory.setItem(13, item(
+                icon,
+                "&d&l" + smallCaps(category),
+                List.of(
+                        "&7" + description,
+                        "",
+                        "&c&lCOMING SOON",
+                        "",
+                        "&7This category is currently",
+                        "&7under development.",
+                        "",
+                        "&eStay tuned for future updates!"
+                )
+        ));
+
+        inventory.setItem(22, item(
+                Material.ARROW,
+                "&c&lʙᴀᴄᴋ",
+                List.of("&7Return to Coin Market.")
+        ));
+
+        fillEmpty(inventory);
+        player.openInventory(inventory);
+    }
+
+    // ==========================================
+    // CONFIRM PURCHASE
+    // ==========================================
 
     private void openConfirmMenu(
             Player player,
@@ -224,6 +401,7 @@ public final class CoinCommand implements CommandExecutor, Listener {
                 path + ".name",
                 rankId
         );
+
         long price = plugin.getConfig().getLong(
                 path + ".price",
                 0L
@@ -238,7 +416,9 @@ public final class CoinCommand implements CommandExecutor, Listener {
             long balance;
 
             try {
-                balance = coinManager.getBalance(player.getUniqueId());
+                balance = coinManager.getBalance(
+                        player.getUniqueId()
+                );
             } catch (Exception exception) {
                 Bukkit.getScheduler().runTask(plugin, () ->
                         player.sendMessage(color(
@@ -251,50 +431,51 @@ public final class CoinCommand implements CommandExecutor, Listener {
             long finalBalance = balance;
 
             Bukkit.getScheduler().runTask(plugin, () -> {
-                if (!player.isOnline()) {
-                    return;
-                }
+                if (!player.isOnline()) return;
 
-                CoinHolder holder = new CoinHolder(
-                        MenuType.CONFIRM,
-                        rankId
-                );
+                CoinHolder holder = new CoinHolder(MenuType.CONFIRM);
+                holder.setRankId(rankId);
 
                 Inventory inventory = Bukkit.createInventory(
                         holder,
                         27,
-                        color("&8KONFIRMASI PEMBELIAN")
+                        color("&8ᴄᴏɴꜰɪʀᴍ ᴘᴜʀᴄʜᴀѕᴇ")
                 );
+
                 holder.setInventory(inventory);
 
                 inventory.setItem(11, item(
                         Material.LIME_DYE,
-                        "&a&lKONFIRMASI",
+                        "&a&lᴄᴏɴꜰɪʀᴍ",
                         List.of(
-                                "&7Rank: &f" + rankName,
-                                "&7Harga: &e" + format(price) + " Coin",
+                                "&7Purchase this rank?",
                                 "",
-                                "&aKlik untuk membeli."
+                                "&aClick to confirm."
                         )
                 ));
 
                 inventory.setItem(13, item(
-                        Material.GOLD_INGOT,
-                        "&e&lINFORMASI PEMBELIAN",
+                        getRankIcon(rankId),
+                        getRankColor(rankId) + "&l" + smallCaps(rankName),
                         List.of(
+                                "&8━━━━━━━━━━━━━━━━",
                                 "&7Rank: &f" + rankName,
-                                "&7Harga: &e" + format(price) + " Coin",
-                                "&7Saldo: &f" + format(finalBalance) + " Coin",
-                                "&7Sisa setelah pembelian: &f"
+                                "&7Price: &e" + format(price) + " Coin",
+                                "&7Balance: &f" + format(finalBalance) + " Coin",
+                                "",
+                                "&7Remaining: &a"
                                         + format(Math.max(0L, finalBalance - price))
-                                        + " Coin"
+                                        + " Coin",
+                                "&8━━━━━━━━━━━━━━━━"
                         )
                 ));
 
                 inventory.setItem(15, item(
                         Material.RED_DYE,
-                        "&c&lBATAL",
-                        List.of("&7Batalkan pembelian.")
+                        "&c&lᴄᴀɴᴄᴇʟ",
+                        List.of(
+                                "&7Cancel this purchase."
+                        )
                 ));
 
                 fillEmpty(inventory);
@@ -302,6 +483,10 @@ public final class CoinCommand implements CommandExecutor, Listener {
             });
         });
     }
+
+    // ==========================================
+    // PURCHASE PROCESS
+    // ==========================================
 
     private void purchaseRank(
             Player player,
@@ -318,36 +503,35 @@ public final class CoinCommand implements CommandExecutor, Listener {
                 path + ".name",
                 rankId
         );
+
         long price = plugin.getConfig().getLong(
                 path + ".price",
                 0L
         );
-
-        if (price <= 0) {
-            player.sendMessage(color("&cHarga rank tidak valid."));
-            return;
-        }
 
         String commandTemplate = plugin.getConfig().getString(
                 path + ".command",
                 ""
         );
 
-        if (commandTemplate.isBlank()) {
+        if (price <= 0 || commandTemplate.isBlank()) {
             player.sendMessage(color(
-                    "&cCommand pemberian rank belum dikonfigurasi."
+                    "&cKonfigurasi rank tidak valid."
             ));
             return;
         }
 
         player.closeInventory();
-        player.sendMessage(color("&eMemproses pembelian rank..."));
+        player.sendMessage(color(
+                "&eMemproses pembelian rank..."
+        ));
 
         UUID uuid = player.getUniqueId();
         String username = player.getName();
 
         String reference = "RANK_" + UUID.randomUUID()
-                .toString().replace("-", "");
+                .toString()
+                .replace("-", "");
 
         Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
@@ -360,19 +544,23 @@ public final class CoinCommand implements CommandExecutor, Listener {
 
                     Bukkit.getScheduler().runTask(plugin, () -> {
                         player.sendMessage(color(
-                                "&cCoin kamu tidak cukup!"
+                                "&c&lCOIN TIDAK CUKUP!"
                         ));
+
                         player.sendMessage(color(
                                 "&7Harga: &e" + format(price) + " Coin"
                         ));
+
                         player.sendMessage(color(
                                 "&7Saldo: &e" + format(balance) + " Coin"
                         ));
+
                         player.sendMessage(color(
                                 "&7Kekurangan: &c"
                                         + format(shortage) + " Coin"
                         ));
                     });
+
                     return;
                 }
 
@@ -394,9 +582,7 @@ public final class CoinCommand implements CommandExecutor, Listener {
                 }
 
                 Bukkit.getScheduler().runTask(plugin, () -> {
-                    if (!player.isOnline()) {
-                        return;
-                    }
+                    if (!player.isOnline()) return;
 
                     String consoleCommand = commandTemplate
                             .replace("%player%", username)
@@ -424,19 +610,28 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         player.sendMessage(color(
                                 "&cGagal memberikan rank. Coin sedang dikembalikan."
                         ));
+
                         plugin.getLogger().severe(
                                 "Rank command failed for " + username
-                                        + ": " + consoleCommand
                         );
+
                         return;
                     }
 
-                    player.sendMessage(color("&a&lPEMBELIAN BERHASIL!"));
                     player.sendMessage(color(
-                            "&7Rank: &b" + rankName
+                            "&a&lPEMBELIAN BERHASIL!"
                     ));
+
+                    player.sendMessage(color(
+                            "&7Rank: " + getRankColor(rankId) + rankName
+                    ));
+
                     player.sendMessage(color(
                             "&7Coin digunakan: &e" + format(price)
+                    ));
+
+                    player.sendMessage(color(
+                            "&bTerima kasih telah berbelanja!"
                     ));
 
                     plugin.getLogger().info(
@@ -483,6 +678,7 @@ public final class CoinCommand implements CommandExecutor, Listener {
                     ));
                 }
             });
+
         } catch (Exception exception) {
             plugin.getLogger().severe(
                     "Failed to refund rank purchase for "
@@ -490,6 +686,10 @@ public final class CoinCommand implements CommandExecutor, Listener {
             );
         }
     }
+
+    // ==========================================
+    // INVENTORY CLICK HANDLER
+    // ==========================================
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
@@ -504,16 +704,42 @@ public final class CoinCommand implements CommandExecutor, Listener {
         event.setCancelled(true);
 
         if (event.getClickedInventory() == null
-                || event.getClickedInventory() != event.getView().getTopInventory()) {
+                || event.getClickedInventory()
+                != event.getView().getTopInventory()) {
             return;
         }
 
         int slot = event.getRawSlot();
 
         if (holder.type == MenuType.MAIN) {
-            if (slot == 11) {
-                openRankMenu(player);
+            switch (slot) {
+                case 20 -> openRankMenu(player);
+
+                case 22 -> openComingSoonMenu(
+                        player,
+                        "ᴄʟᴀɪᴍ ʙʟᴏᴄᴋ",
+                        Material.EMERALD_BLOCK,
+                        "Protect your land with Claim Blocks."
+                );
+
+                case 24 -> openComingSoonMenu(
+                        player,
+                        "ᴘᴇᴛѕ",
+                        Material.CREEPER_SPAWN_EGG,
+                        "Find your own loyal companions."
+                );
+
+                case 31 -> openComingSoonMenu(
+                        player,
+                        "ᴄᴏѕᴍᴇᴛɪᴄ",
+                        Material.AMETHYST_SHARD,
+                        "Customize your character."
+                );
+
+                default -> {
+                }
             }
+
             return;
         }
 
@@ -528,6 +754,7 @@ public final class CoinCommand implements CommandExecutor, Listener {
             if (rankId != null) {
                 openConfirmMenu(player, rankId);
             }
+
             return;
         }
 
@@ -537,8 +764,20 @@ public final class CoinCommand implements CommandExecutor, Listener {
             } else if (slot == 15) {
                 openRankMenu(player);
             }
+
+            return;
+        }
+
+        if (holder.type == MenuType.COMING_SOON) {
+            if (slot == 22) {
+                openMainMenu(player);
+            }
         }
     }
+
+    // ==========================================
+    // ITEM BUILDER
+    // ==========================================
 
     private ItemStack item(
             Material material,
@@ -549,11 +788,12 @@ public final class CoinCommand implements CommandExecutor, Listener {
         ItemMeta meta = stack.getItemMeta();
 
         if (meta != null) {
-            meta.setDisplayName(color(name));
+            meta.setDisplayName(color(style(name)));
 
             List<String> coloredLore = new ArrayList<>();
+
             for (String line : lore) {
-                coloredLore.add(color(line));
+                coloredLore.add(color(style(line)));
             }
 
             meta.setLore(coloredLore);
@@ -563,9 +803,68 @@ public final class CoinCommand implements CommandExecutor, Listener {
         return stack;
     }
 
+    // ==========================================
+    // SMALL CAPS FONT
+    // ==========================================
+
+    private String style(String text) {
+        StringBuilder result = new StringBuilder();
+
+        for (int i = 0; i < text.length(); i++) {
+            char current = text.charAt(i);
+
+            // Preserve Minecraft color codes.
+            if (current == '&' && i + 1 < text.length()) {
+                result.append(current);
+                result.append(text.charAt(++i));
+                continue;
+            }
+
+            result.append(toSmallCaps(current));
+        }
+
+        return result.toString();
+    }
+
+    private char toSmallCaps(char c) {
+        return switch (c) {
+            case 'a' -> 'ᴀ';
+            case 'b' -> 'ʙ';
+            case 'c' -> 'ᴄ';
+            case 'd' -> 'ᴅ';
+            case 'e' -> 'ᴇ';
+            case 'f' -> 'ꜰ';
+            case 'g' -> 'ɢ';
+            case 'h' -> 'ʜ';
+            case 'i' -> 'ɪ';
+            case 'j' -> 'ᴊ';
+            case 'k' -> 'ᴋ';
+            case 'l' -> 'ʟ';
+            case 'm' -> 'ᴍ';
+            case 'n' -> 'ɴ';
+            case 'o' -> 'ᴏ';
+            case 'p' -> 'ᴘ';
+            case 'q' -> 'ǫ';
+            case 'r' -> 'ʀ';
+            case 's' -> 'ѕ';
+            case 't' -> 'ᴛ';
+            case 'u' -> 'ᴜ';
+            case 'v' -> 'ᴠ';
+            case 'w' -> 'ᴡ';
+            case 'x' -> 'x';
+            case 'y' -> 'ʏ';
+            case 'z' -> 'ᴢ';
+            default -> c;
+        };
+    }
+
+    // ==========================================
+    // INVENTORY FILLER
+    // ==========================================
+
     private void fillEmpty(Inventory inventory) {
         ItemStack filler = item(
-                Material.GRAY_STAINED_GLASS_PANE,
+                Material.BLACK_STAINED_GLASS_PANE,
                 "&r",
                 List.of()
         );
@@ -585,28 +884,37 @@ public final class CoinCommand implements CommandExecutor, Listener {
         return ChatColor.translateAlternateColorCodes('&', message);
     }
 
+    // ==========================================
+    // MENU HOLDER
+    // ==========================================
+
     private enum MenuType {
         MAIN,
         RANKS,
-        CONFIRM
+        CONFIRM,
+        COMING_SOON
     }
 
     private static final class CoinHolder implements InventoryHolder {
 
         private final MenuType type;
-        private final String rankId;
-        private final java.util.Map<Integer, String> rankSlots =
-                new java.util.HashMap<>();
+
+        private final Map<Integer, String> rankSlots =
+                new HashMap<>();
 
         private Inventory inventory;
+        private String rankId;
 
-        private CoinHolder(MenuType type, String rankId) {
+        private CoinHolder(MenuType type) {
             this.type = type;
-            this.rankId = rankId;
         }
 
         private void setInventory(Inventory inventory) {
             this.inventory = inventory;
+        }
+
+        private void setRankId(String rankId) {
+            this.rankId = rankId;
         }
 
         private void setRankSlot(int slot, String rankId) {
