@@ -47,6 +47,57 @@ payment:
   enabled-methods:
     - "QRIS"
 
+rank-shop:
+  enabled: true
+
+  # Command dijalankan melalui console.
+  # Sesuaikan nama group dengan group LuckPerms server kamu.
+  ranks:
+    donatur:
+      name: "DONATUR"
+      price: 57500
+      command: "lp user %player% parent set donatur"
+
+    ascendance:
+      name: "ASCENDANCE"
+      price: 36800
+      command: "lp user %player% parent set ascendance"
+
+    sovereign:
+      name: "SOVEREIGN"
+      price: 28750
+      command: "lp user %player% parent set sovereign"
+
+    immortal:
+      name: "IMMORTAL"
+      price: 21850
+      command: "lp user %player% parent set immortal"
+
+    duke:
+      name: "DUKE"
+      price: 18400
+      command: "lp user %player% parent set duke"
+
+    viscount:
+      name: "VISCOUNT"
+      price: 9200
+      command: "lp user %player% parent set viscount"
+
+    baron:
+      name: "BARON"
+      price: 5750
+      command: "lp user %player% parent set baron"
+
+    knight:
+      name: "KNIGHT"
+      price: 4025
+      command: "lp user %player% parent set knight"
+
+    peasant:
+      name: "PEASANT"
+      price: 2300
+      command: "lp user %player% parent set peasant"
+
 messages:
   prefix: "&8[&bNovaTerra&8] "
   no-permission: "&cKamu tidak memiliki izin!"
