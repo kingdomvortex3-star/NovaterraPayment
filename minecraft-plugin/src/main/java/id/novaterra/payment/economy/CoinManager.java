@@ -8,6 +8,7 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -37,7 +38,6 @@ public final class CoinManager {
 
     /**
      * Creates a player account if it does not exist.
-     * Uses the same lock as balance transactions.
      */
     public synchronized void createAccount(
             UUID uuid,
@@ -55,16 +55,17 @@ public final class CoinManager {
                 if (balance != null) {
                     updateUsername(connection, uuid, username);
                     connection.commit();
+
                     balanceCache.put(uuid, balance);
                     return;
                 }
 
                 long startingBalance = plugin.getConfig()
-                        .getLong("coin.starting-balance", 0);
+                        .getLong("coin.starting-balance", 0L);
 
                 if (!CoinValidator.isValidBalance(startingBalance)) {
                     throw new SQLException(
-                            "Invalid starting balance!"
+                            "Invalid starting balance: " + startingBalance
                     );
                 }
 
@@ -92,8 +93,9 @@ public final class CoinManager {
                 balanceCache.put(uuid, startingBalance);
 
             } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
+                rollback(connection, exception);
                 throw exception;
+
             } finally {
                 connection.setAutoCommit(true);
             }
@@ -134,6 +136,10 @@ public final class CoinManager {
      * Gets balance from cache only.
      */
     public synchronized long getCachedBalance(UUID uuid) {
+        if (uuid == null) {
+            return 0L;
+        }
+
         return balanceCache.getOrDefault(uuid, 0L);
     }
 
@@ -143,12 +149,12 @@ public final class CoinManager {
     public synchronized void loadBalance(UUID uuid)
             throws SQLException {
 
-        if (uuid != null) {
-            balanceCache.put(
-                    uuid,
-                    getDatabaseBalance(uuid)
-            );
+        if (uuid == null) {
+            return;
         }
+
+        long balance = getDatabaseBalance(uuid);
+        balanceCache.put(uuid, balance);
     }
 
     /**
@@ -179,9 +185,8 @@ public final class CoinManager {
 
         String sql = "SELECT balance FROM players WHERE uuid = ?";
 
-        if ("MYSQL".equalsIgnoreCase(
-                database.getDatabaseType()
-        )) {
+        if ("MYSQL".equalsIgnoreCase(database.getDatabaseType())
+                && !connection.getAutoCommit()) {
             sql += " FOR UPDATE";
         }
 
@@ -201,9 +206,7 @@ public final class CoinManager {
     }
 
     /**
-     * Backward-compatible method.
-     * Returns false only when the reference was already processed.
-     * Invalid amounts and database failures throw exceptions.
+     * Backward-compatible Coin credit method.
      */
     public boolean addCoins(
             UUID uuid,
@@ -235,7 +238,7 @@ public final class CoinManager {
 
         if (!CoinValidator.isValidAmount(amount)) {
             throw new IllegalArgumentException(
-                    "Invalid coin amount."
+                    "Invalid coin amount: " + amount
             );
         }
 
@@ -262,7 +265,7 @@ public final class CoinManager {
 
         if (!CoinValidator.isValidAmount(amount)) {
             throw new IllegalArgumentException(
-                    "Invalid coin amount."
+                    "Invalid coin amount: " + amount
             );
         }
 
@@ -277,7 +280,7 @@ public final class CoinManager {
     }
 
     /**
-     * Updates balance, history, and processed event atomically.
+     * Updates balance, history and processed event atomically.
      */
     private synchronized CreditResult changeBalance(
             UUID uuid,
@@ -297,7 +300,7 @@ public final class CoinManager {
             try {
                 /*
                  * Register reference in the same transaction.
-                 * A duplicate reference must never credit Coin twice.
+                 * Duplicate references cannot credit Coin twice.
                  */
                 if (referenceId != null
                         && !registerReference(
@@ -327,6 +330,7 @@ public final class CoinManager {
                             currentBalance,
                             amount
                     );
+
                 } catch (IllegalArgumentException exception) {
                     throw new SQLException(
                             "Coin balance limit exceeded for player "
@@ -397,13 +401,15 @@ public final class CoinManager {
 
                 connection.commit();
 
+                // Cache is updated only after successful commit.
                 balanceCache.put(uuid, newBalance);
 
                 return CreditResult.APPLIED;
 
             } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
+                rollback(connection, exception);
                 throw exception;
+
             } finally {
                 connection.setAutoCommit(true);
             }
@@ -450,28 +456,33 @@ public final class CoinManager {
     }
 
     /**
-     * Detects actual unique constraint violations.
+     * Detects actual duplicate key violations only.
      */
     private boolean isDuplicateKey(SQLException exception) {
         SQLException current = exception;
 
         while (current != null) {
-            String message = current.getMessage();
             String state = current.getSQLState();
             int errorCode = current.getErrorCode();
 
-            if ("23505".equals(state)
-                    || errorCode == 1062
-                    || errorCode == 19) {
+            if ("23505".equals(state) || errorCode == 1062) {
                 return true;
             }
 
-            if (message != null) {
-                String normalized = message.toLowerCase();
+            String message = current.getMessage();
 
-                if (normalized.contains("unique constraint failed")
-                        || normalized.contains("primary key constraint failed")
-                        || normalized.contains("duplicate entry")) {
+            if (message != null) {
+                String normalized = message.toLowerCase(Locale.ROOT);
+
+                boolean uniqueViolation =
+                        normalized.contains("unique constraint failed")
+                        || normalized.contains("duplicate entry")
+                        || normalized.contains("duplicate key");
+
+                boolean primaryKeyViolation =
+                        normalized.contains("primary key constraint failed");
+
+                if (uniqueViolation || primaryKeyViolation) {
                     return true;
                 }
             }
@@ -482,6 +493,9 @@ public final class CoinManager {
         return false;
     }
 
+    /**
+     * Validates transaction reference.
+     */
     private void validateReference(String referenceId) {
         if (referenceId != null
                 && (referenceId.isBlank()
@@ -539,6 +553,20 @@ public final class CoinManager {
             throw new IllegalArgumentException(
                     "Invalid player username."
             );
+        }
+    }
+
+    /**
+     * Rolls back and preserves the original exception.
+     */
+    private void rollback(
+            Connection connection,
+            Exception original
+    ) {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackException) {
+            original.addSuppressed(rollbackException);
         }
     }
 
