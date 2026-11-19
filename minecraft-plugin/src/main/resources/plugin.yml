@@ -8,6 +8,7 @@ description: Automated Minecraft Payment and Coin System
 
 softdepend:
   - PlaceholderAPI
+  - LuckPerms
 
 commands:
   novapayment:
@@ -18,6 +19,13 @@ commands:
     usage: /novapayment [reload]
     permission: novaterra.payment.admin
 
+  coin:
+    description: Open NovaTerra Coin Market
+    aliases:
+      - coins
+    usage: /coin
+    permission: novaterra.payment.use
+
   coinadmin:
     description: Manage player Coin balances
     usage: /coinadmin <give|take|set> <player> <amount>
@@ -27,3 +35,7 @@ permissions:
   novaterra.payment.admin:
     description: Access to payment administration
     default: op
+
+  novaterra.payment.use:
+    description: Access to Coin Market
+    default: true
