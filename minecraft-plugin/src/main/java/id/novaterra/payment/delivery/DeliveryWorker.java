@@ -2,6 +2,7 @@
 package id.novaterra.payment.delivery;
 
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -21,7 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 
 import javax.crypto.Mac;
@@ -29,12 +30,19 @@ import javax.crypto.spec.SecretKeySpec;
 
 public final class DeliveryWorker {
 
-    private static final Gson GSON = new Gson();
+    private static final Gson GSON = new GsonBuilder()
+            .disableHtmlEscaping()
+            .create();
+
+    private static final long MAX_COIN_AMOUNT =
+            1_000_000_000_000L;
 
     private final NovaTerraPayment plugin;
     private final CoinManager coinManager;
-
     private final HttpClient httpClient;
+
+    private final AtomicBoolean processing =
+            new AtomicBoolean(false);
 
     private BukkitTask workerTask;
 
@@ -42,8 +50,8 @@ public final class DeliveryWorker {
     private String serverId;
     private String secret;
 
-    private int batchSize;
     private int intervalSeconds;
+    private int readTimeout;
 
     public DeliveryWorker(
             NovaTerraPayment plugin,
@@ -52,7 +60,7 @@ public final class DeliveryWorker {
         this.plugin = plugin;
         this.coinManager = coinManager;
 
-        int timeout = Math.max(
+        this.readTimeout = Math.max(
                 1000,
                 plugin.getConfig().getInt(
                         "api.read-timeout",
@@ -60,9 +68,17 @@ public final class DeliveryWorker {
                 )
         );
 
+        int connectTimeout = Math.max(
+                1000,
+                plugin.getConfig().getInt(
+                        "api.connection-timeout",
+                        10000
+                )
+        );
+
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(
-                        java.time.Duration.ofMillis(timeout)
+                        java.time.Duration.ofMillis(connectTimeout)
                 )
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
@@ -73,63 +89,12 @@ public final class DeliveryWorker {
             return;
         }
 
-        if (!plugin.getConfig().getBoolean("api.enabled", false)) {
+        if (!plugin.getConfig().getBoolean(
+                "api.enabled",
+                false
+        )) {
             plugin.getLogger().info(
                     "Coin delivery worker disabled by configuration."
-            );
-            return;
-        }
-
-        baseUrl = plugin.getConfig()
-                .getString("api.url", "")
-                .trim()
-                .replaceAll("/+$", "");
-
-        serverId = plugin.getConfig()
-                .getString("api.server-id", "").trim();
-
-        secret = plugin.getConfig()
-                .getString("api.secret", "");
-
-        batchSize = Math.max(
-                1,
-                Math.min(
-                        20,
-                        plugin.getConfig().getInt(
-                                "api.synchronization.batch-size",
-                                5
-                        )
-                )
-        );
-
-        intervalSeconds = Math.max(
-                5,
-                plugin.getConfig().getInt(
-                        "api.synchronization.interval-seconds",
-                        10
-                )
-        );
-
-        if (!baseUrl.startsWith("https://")) {
-            plugin.getLogger().severe(
-                    "Delivery worker requires HTTPS. Worker was not started."
-            );
-            return;
-        }
-
-        if (serverId.isBlank()
-                || !serverId.matches("[a-zA-Z0-9_-]{3,64}")) {
-            plugin.getLogger().severe(
-                    "Invalid api.server-id. Worker was not started."
-            );
-            return;
-        }
-
-        if (secret == null
-                || secret.isBlank()
-                || secret.equals("CHANGE_THIS_SECRET")) {
-            plugin.getLogger().severe(
-                    "API secret is not configured. Worker was not started."
             );
             return;
         }
@@ -144,14 +109,58 @@ public final class DeliveryWorker {
             return;
         }
 
+        baseUrl = plugin.getConfig()
+                .getString("api.url", "")
+                .trim()
+                .replaceAll("/+$", "");
+
+        serverId = plugin.getConfig()
+                .getString("api.server-id", "")
+                .trim();
+
+        secret = plugin.getConfig()
+                .getString("api.secret", "");
+
+        intervalSeconds = Math.max(
+                5,
+                plugin.getConfig().getInt(
+                        "api.synchronization.interval-seconds",
+                        10
+                )
+        );
+
+        if (!baseUrl.startsWith("https://")) {
+            plugin.getLogger().severe(
+                    "Delivery worker requires HTTPS."
+            );
+            return;
+        }
+
+        if (!validServerId(serverId)) {
+            plugin.getLogger().severe(
+                    "Invalid api.server-id."
+            );
+            return;
+        }
+
+        if (secret == null
+                || secret.isBlank()
+                || secret.equals("CHANGE_THIS_SECRET")) {
+            plugin.getLogger().severe(
+                    "API secret is not configured."
+            );
+            return;
+        }
+
         long period = intervalSeconds * 20L;
 
-        workerTask = Bukkit.getScheduler().runTaskTimerAsynchronously(
-                plugin,
-                this::processQueue,
-                40L,
-                period
-        );
+        workerTask = Bukkit.getScheduler()
+                .runTaskTimerAsynchronously(
+                        plugin,
+                        this::processQueue,
+                        40L,
+                        period
+                );
 
         plugin.getLogger().info(
                 "Coin delivery worker started."
@@ -165,20 +174,33 @@ public final class DeliveryWorker {
         }
     }
 
+    private boolean validServerId(String value) {
+        return value != null
+                && value.matches("[a-zA-Z0-9_-]{3,64}");
+    }
+
     private void processQueue() {
+        if (!processing.compareAndSet(false, true)) {
+            return;
+        }
+
         try {
             JsonObject requestBody = new JsonObject();
 
             requestBody.addProperty("server_id", serverId);
-            requestBody.addProperty("limit", batchSize);
+
+            /*
+             * Process one job at a time.
+             * This avoids holding a large batch while its lease expires.
+             */
+            requestBody.addProperty("limit", 1);
 
             JsonObject response = post(
                     "/api/delivery/claim",
                     requestBody
             );
 
-            if (!response.has("success")
-                    || !response.get("success").getAsBoolean()) {
+            if (!isSuccessful(response)) {
                 throw new IllegalStateException(
                         "API rejected delivery claim."
                 );
@@ -207,6 +229,9 @@ public final class DeliveryWorker {
                     "Coin delivery queue error: "
                             + exception.getMessage()
             );
+
+        } finally {
+            processing.set(false);
         }
     }
 
@@ -233,18 +258,22 @@ public final class DeliveryWorker {
 
             UUID uuid = UUID.fromString(playerUUID);
 
-            if (coinAmount <= 0) {
+            if (coinAmount <= 0
+                    || coinAmount > MAX_COIN_AMOUNT) {
                 throw new IllegalArgumentException(
-                        "Invalid Coin amount."
+                        "Coin amount is outside the allowed limit."
                 );
             }
 
-            if (coinAmount > 1_000_000_000_000L) {
-                throw new IllegalArgumentException(
-                        "Coin amount exceeds transaction limit."
-                );
-            }
+            /*
+             * Extend the lease before touching the local database.
+             */
+            renewLease(orderId);
 
+            /*
+             * Account creation and credit are performed locally.
+             * The order ID is the unique idempotency reference.
+             */
             coinManager.createAccount(uuid, playerName);
 
             CoinManager.CreditResult result =
@@ -263,6 +292,10 @@ public final class DeliveryWorker {
                 );
             }
 
+            /*
+             * APPLIED means the credit was committed.
+             * DUPLICATE means the same order was already committed.
+             */
             completeDelivery(orderId);
 
             plugin.getLogger().info(
@@ -282,8 +315,42 @@ public final class DeliveryWorker {
             );
 
             if (orderId != null) {
-                reportFailure(orderId, exception.getMessage());
+                reportFailure(
+                        orderId,
+                        exception.getMessage()
+                );
             }
+        }
+    }
+
+    private void renewLease(String orderId)
+            throws Exception {
+
+        JsonObject body = new JsonObject();
+
+        body.addProperty("server_id", serverId);
+        body.addProperty("order_id", orderId);
+
+        JsonObject response = post(
+                "/api/delivery/renew",
+                body
+        );
+
+        if (!isSuccessful(response)) {
+            throw new IllegalStateException(
+                    "Could not renew delivery lease: "
+                            + response
+            );
+        }
+
+        String status = response.has("status")
+                ? response.get("status").getAsString()
+                : "";
+
+        if (!"RENEWED".equals(status)) {
+            throw new IllegalStateException(
+                    "Unexpected lease status: " + status
+            );
         }
     }
 
@@ -300,10 +367,22 @@ public final class DeliveryWorker {
                 body
         );
 
-        if (!response.has("success")
-                || !response.get("success").getAsBoolean()) {
+        if (!isSuccessful(response)) {
             throw new IllegalStateException(
-                    "API did not confirm Coin delivery."
+                    "API did not confirm Coin delivery: "
+                            + response
+            );
+        }
+
+        String status = response.has("status")
+                ? response.get("status").getAsString()
+                : "";
+
+        if (!"DELIVERED".equals(status)
+                && !"ALREADY_DELIVERED".equals(status)) {
+            throw new IllegalStateException(
+                    "Unexpected delivery completion status: "
+                            + status
             );
         }
     }
@@ -318,24 +397,34 @@ public final class DeliveryWorker {
             body.addProperty("server_id", serverId);
             body.addProperty("order_id", orderId);
 
-            body.addProperty(
-                    "error",
-                    error == null
-                            ? "Unknown delivery error."
-                            : error.substring(
-                                    0,
-                                    Math.min(error.length(), 500)
-                            )
+            String safeError = error == null
+                    ? "Unknown delivery error."
+                    : error;
+
+            if (safeError.length() > 500) {
+                safeError = safeError.substring(0, 500);
+            }
+
+            body.addProperty("error", safeError);
+
+            JsonObject response = post(
+                    "/api/delivery/fail",
+                    body
             );
 
-            post("/api/delivery/fail", body);
+            if (!isSuccessful(response)) {
+                plugin.getLogger().warning(
+                        "API could not record delivery failure for "
+                                + orderId
+                );
+            }
 
         } catch (Exception exception) {
-            plugin.getLogger().warning(
+            plugin.getLogger().log(
+                    Level.WARNING,
                     "Could not report delivery failure for "
-                            + orderId
-                            + ": "
-                            + exception.getMessage()
+                            + orderId,
+                    exception
             );
         }
     }
@@ -357,12 +446,9 @@ public final class DeliveryWorker {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(baseUrl + endpoint))
-                .timeout(java.time.Duration.ofMillis(
-                        plugin.getConfig().getInt(
-                                "api.read-timeout",
-                                15000
-                        )
-                ))
+                .timeout(
+                        java.time.Duration.ofMillis(readTimeout)
+                )
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
                 .header("x-nova-timestamp", timestamp)
@@ -380,24 +466,43 @@ public final class DeliveryWorker {
                 )
         );
 
-        if (response.statusCode() < 200
-                || response.statusCode() >= 300) {
+        JsonElement parsed;
+
+        try {
+            parsed = JsonParser.parseString(response.body());
+        } catch (RuntimeException exception) {
             throw new IllegalStateException(
-                    "API HTTP status: " + response.statusCode()
+                    "API returned invalid JSON. HTTP "
+                            + response.statusCode(),
+                    exception
             );
         }
-
-        JsonElement parsed = JsonParser.parseString(
-                response.body()
-        );
 
         if (!parsed.isJsonObject()) {
             throw new IllegalStateException(
-                    "Invalid API JSON response."
+                    "API response is not a JSON object."
             );
         }
 
-        return parsed.getAsJsonObject();
+        JsonObject result = parsed.getAsJsonObject();
+
+        if (response.statusCode() < 200
+                || response.statusCode() >= 300) {
+            throw new IllegalStateException(
+                    "API HTTP status "
+                            + response.statusCode()
+                            + ": "
+                            + result
+            );
+        }
+
+        return result;
+    }
+
+    private boolean isSuccessful(JsonObject response) {
+        return response.has("success")
+                && response.get("success").isJsonPrimitive()
+                && response.get("success").getAsBoolean();
     }
 
     private String generateSignature(String payload)
@@ -424,9 +529,10 @@ public final class DeliveryWorker {
             String key
     ) {
         if (!object.has(key)
-                || object.get(key).isJsonNull()) {
+                || object.get(key).isJsonNull()
+                || !object.get(key).isJsonPrimitive()) {
             throw new IllegalArgumentException(
-                    "Missing field: " + key
+                    "Missing or invalid field: " + key
             );
         }
 
@@ -446,12 +552,20 @@ public final class DeliveryWorker {
             String key
     ) {
         if (!object.has(key)
-                || object.get(key).isJsonNull()) {
+                || object.get(key).isJsonNull()
+                || !object.get(key).isJsonPrimitive()) {
             throw new IllegalArgumentException(
-                    "Missing numeric field: " + key
+                    "Missing or invalid numeric field: " + key
             );
         }
 
-        return object.get(key).getAsLong();
+        try {
+            return object.get(key).getAsLong();
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException(
+                    "Invalid numeric field: " + key,
+                    exception
+            );
+        }
     }
 }
