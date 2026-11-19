@@ -47,11 +47,13 @@ function getPaymentStatus(status, fraudStatus) {
     }
 }
 
-module.exports = function registerWebhook(app, db) {
+function registerWebhook(app, db) {
     const serverKey = process.env.MIDTRANS_SERVER_KEY;
 
     if (!serverKey) {
-        throw new Error("MIDTRANS_SERVER_KEY belum dikonfigurasi.");
+        throw new Error(
+            "MIDTRANS_SERVER_KEY belum dikonfigurasi."
+        );
     }
 
     app.post("/webhook/midtrans", (req, res) => {
@@ -70,6 +72,8 @@ module.exports = function registerWebhook(app, db) {
 
             if (
                 typeof order_id !== "string" ||
+                order_id.length < 1 ||
+                order_id.length > 64 ||
                 typeof status_code !== "string" ||
                 typeof gross_amount !== "string" ||
                 typeof signature_key !== "string" ||
@@ -92,37 +96,13 @@ module.exports = function registerWebhook(app, db) {
                 .update(signatureInput)
                 .digest("hex");
 
-            if (!safeCompareHex(signature_key, expectedSignature)) {
+            if (!safeCompareHex(
+                signature_key,
+                expectedSignature
+            )) {
                 return res.status(403).json({
                     success: false,
                     message: "Signature tidak valid."
-                });
-            }
-
-            const transaction = db.prepare(`
-                SELECT *
-                FROM transactions
-                WHERE order_id = ?
-            `).get(order_id);
-
-            if (!transaction) {
-                return res.status(404).json({
-                    success: false,
-                    message: "Transaksi tidak ditemukan."
-                });
-            }
-
-            const receivedAmount = Number(gross_amount);
-            const expectedAmount = Number(transaction.payment_amount);
-
-            if (
-                !Number.isFinite(receivedAmount) ||
-                Math.round(receivedAmount * 100) !==
-                Math.round(expectedAmount * 100)
-            ) {
-                return res.status(400).json({
-                    success: false,
-                    message: "Nominal pembayaran tidak cocok."
                 });
             }
 
@@ -131,6 +111,14 @@ module.exports = function registerWebhook(app, db) {
                 fraud_status
             );
 
+            if (!requestedStatus) {
+                return res.status(200).json({
+                    success: true,
+                    ignored: true,
+                    message: "Status pembayaran tidak memerlukan tindakan."
+                });
+            }
+
             const eventId = crypto
                 .createHash("sha256")
                 .update([
@@ -138,11 +126,40 @@ module.exports = function registerWebhook(app, db) {
                     transaction_status,
                     status_code,
                     gross_amount,
-                    transaction_id || ""
+                    transaction_id || "",
+                    fraud_status || ""
                 ].join(":"))
                 .digest("hex");
 
             const processEvent = db.transaction(() => {
+                const transaction = db.prepare(`
+                    SELECT *
+                    FROM transactions
+                    WHERE order_id = ?
+                `).get(order_id);
+
+                if (!transaction) {
+                    return {
+                        type: "NOT_FOUND"
+                    };
+                }
+
+                const receivedAmount = Number(gross_amount);
+                const expectedAmount = Number(
+                    transaction.payment_amount
+                );
+
+                if (
+                    !Number.isFinite(receivedAmount) ||
+                    !Number.isFinite(expectedAmount) ||
+                    Math.round(receivedAmount * 100) !==
+                    Math.round(expectedAmount * 100)
+                ) {
+                    return {
+                        type: "INVALID_AMOUNT"
+                    };
+                }
+
                 const existingEvent = db.prepare(`
                     SELECT id
                     FROM processed_events
@@ -151,9 +168,8 @@ module.exports = function registerWebhook(app, db) {
 
                 if (existingEvent) {
                     return {
-                        processed: false,
-                        status: transaction.transaction_status,
-                        deliveryQueued: false
+                        type: "DUPLICATE",
+                        status: transaction.transaction_status
                     };
                 }
 
@@ -165,21 +181,31 @@ module.exports = function registerWebhook(app, db) {
                     VALUES (?, ?)
                 `).run(eventId, order_id);
 
-                const currentStatus = transaction.transaction_status;
+                const currentStatus =
+                    transaction.transaction_status;
+
                 let finalStatus = currentStatus;
 
-                if (requestedStatus === "PAID") {
-                    finalStatus = "PAID";
+                /*
+                 * REFUNDED is terminal.
+                 * A late PAID notification must never restore it.
+                 */
+                if (currentStatus === "REFUNDED") {
+                    finalStatus = "REFUNDED";
+
                 } else if (requestedStatus === "REFUNDED") {
                     finalStatus = "REFUNDED";
+
                 } else if (
-                    currentStatus === "PAID" ||
-                    currentStatus === "REFUNDED" ||
                     currentStatus === "EXPIRED" ||
                     currentStatus === "CANCELLED" ||
                     currentStatus === "FAILED"
                 ) {
                     finalStatus = currentStatus;
+
+                } else if (currentStatus === "PAID") {
+                    finalStatus = "PAID";
+
                 } else if (requestedStatus) {
                     finalStatus = requestedStatus;
                 }
@@ -193,7 +219,10 @@ module.exports = function registerWebhook(app, db) {
                         updated_at = CURRENT_TIMESTAMP,
                         paid_at = CASE
                             WHEN ? = 'PAID'
-                            THEN COALESCE(paid_at, CURRENT_TIMESTAMP)
+                            THEN COALESCE(
+                                paid_at,
+                                CURRENT_TIMESTAMP
+                            )
                             ELSE paid_at
                         END
                     WHERE order_id = ?
@@ -205,6 +234,7 @@ module.exports = function registerWebhook(app, db) {
                 );
 
                 let deliveryQueued = false;
+                let refundAction = "NONE";
 
                 if (finalStatus === "PAID") {
                     const result = db.prepare(`
@@ -226,14 +256,78 @@ module.exports = function registerWebhook(app, db) {
                     deliveryQueued = result.changes > 0;
                 }
 
+                if (finalStatus === "REFUNDED") {
+                    const job = db.prepare(`
+                        SELECT delivery_status
+                        FROM coin_delivery_jobs
+                        WHERE order_id = ?
+                    `).get(order_id);
+
+                    if (job) {
+                        const mayHaveCredited =
+                            job.delivery_status === "DELIVERED" ||
+                            job.delivery_status === "PROCESSING" ||
+                            job.delivery_status === "REFUND_REQUIRED";
+
+                        const nextDeliveryStatus =
+                            mayHaveCredited
+                                ? "REFUND_REQUIRED"
+                                : "CANCELLED";
+
+                        db.prepare(`
+                            UPDATE coin_delivery_jobs
+                            SET
+                                delivery_status = ?,
+                                claimed_by = NULL,
+                                lease_expires_at = NULL,
+                                last_error = ?,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE order_id = ?
+                        `).run(
+                            nextDeliveryStatus,
+                            mayHaveCredited
+                                ? "Payment refunded. Coin reversal requires reconciliation."
+                                : "Payment refunded before Coin delivery.",
+                            order_id
+                        );
+
+                        refundAction = nextDeliveryStatus;
+                    }
+                }
+
                 return {
-                    processed: true,
+                    type: "PROCESSED",
                     status: finalStatus,
-                    deliveryQueued
+                    deliveryQueued,
+                    refundAction
                 };
             });
 
             const result = processEvent();
+
+            if (result.type === "NOT_FOUND") {
+                return res.status(404).json({
+                    success: false,
+                    message: "Transaksi tidak ditemukan."
+                });
+            }
+
+            if (result.type === "INVALID_AMOUNT") {
+                return res.status(400).json({
+                    success: false,
+                    message: "Nominal pembayaran tidak cocok."
+                });
+            }
+
+            if (result.type === "DUPLICATE") {
+                return res.status(200).json({
+                    success: true,
+                    processed: false,
+                    duplicate: true,
+                    order_id,
+                    status: result.status
+                });
+            }
 
             console.log(
                 "[NOVATERRA] Webhook:",
@@ -241,15 +335,18 @@ module.exports = function registerWebhook(app, db) {
                 "=>",
                 result.status,
                 "| Delivery queued:",
-                result.deliveryQueued
+                result.deliveryQueued,
+                "| Refund action:",
+                result.refundAction
             );
 
             return res.status(200).json({
                 success: true,
-                processed: result.processed,
+                processed: true,
                 order_id,
                 status: result.status,
-                delivery_queued: result.deliveryQueued
+                delivery_queued: result.deliveryQueued,
+                refund_action: result.refundAction
             });
 
         } catch (error) {
@@ -264,4 +361,6 @@ module.exports = function registerWebhook(app, db) {
             });
         }
     });
-};
+}
+
+module.exports = registerWebhook;
