@@ -22,6 +22,10 @@ public final class TransactionManager {
     public boolean createTransaction(Transaction transaction)
             throws SQLException {
 
+        if (transaction == null) {
+            throw new IllegalArgumentException("Transaction cannot be null.");
+        }
+
         String sql = """
                 INSERT INTO transactions (
                     transaction_id,
@@ -42,37 +46,20 @@ public final class TransactionManager {
              PreparedStatement statement =
                      connection.prepareStatement(sql)) {
 
-            statement.setString(
-                    1, transaction.getTransactionId()
-            );
-
-            statement.setString(
-                    2, transaction.getPlayerUUID().toString()
-            );
-
-            statement.setString(
-                    3, transaction.getPlayerName()
-            );
-
+            statement.setString(1, transaction.getTransactionId());
+            statement.setString(2, transaction.getPlayerUUID().toString());
+            statement.setString(3, transaction.getPlayerName());
             statement.setLong(4, transaction.getCoins());
             statement.setLong(5, transaction.getAmount());
             statement.setString(6, transaction.getCurrency());
-
-            statement.setString(
-                    7, transaction.getStatus().name()
-            );
-
+            statement.setString(7, transaction.getStatus().name());
             statement.setString(8, transaction.getGateway());
             statement.setLong(9, transaction.getCreatedAt());
 
             if (transaction.getPaidAt() == null) {
-                statement.setNull(
-                        10, java.sql.Types.BIGINT
-                );
+                statement.setNull(10, java.sql.Types.BIGINT);
             } else {
-                statement.setLong(
-                        10, transaction.getPaidAt()
-                );
+                statement.setLong(10, transaction.getPaidAt());
             }
 
             return statement.executeUpdate() == 1;
@@ -81,6 +68,10 @@ public final class TransactionManager {
 
     public Transaction getTransaction(String transactionId)
             throws SQLException {
+
+        if (transactionId == null || transactionId.isBlank()) {
+            return null;
+        }
 
         String sql = """
                 SELECT *
@@ -95,12 +86,7 @@ public final class TransactionManager {
             statement.setString(1, transactionId);
 
             try (ResultSet result = statement.executeQuery()) {
-
-                if (!result.next()) {
-                    return null;
-                }
-
-                return mapTransaction(result);
+                return result.next() ? mapTransaction(result) : null;
             }
         }
     }
@@ -109,6 +95,10 @@ public final class TransactionManager {
             throws SQLException {
 
         List<Transaction> transactions = new ArrayList<>();
+
+        if (playerUUID == null) {
+            return transactions;
+        }
 
         String sql = """
                 SELECT *
@@ -124,7 +114,6 @@ public final class TransactionManager {
             statement.setString(1, playerUUID.toString());
 
             try (ResultSet result = statement.executeQuery()) {
-
                 while (result.next()) {
                     transactions.add(mapTransaction(result));
                 }
@@ -139,18 +128,57 @@ public final class TransactionManager {
             TransactionStatus newStatus
     ) throws SQLException {
 
-        String sql = """
-                UPDATE transactions
-                SET status = ?
-                WHERE transaction_id = ?
-                """;
+        if (transactionId == null || transactionId.isBlank()
+                || newStatus == null) {
+            return false;
+        }
+
+        String allowedPreviousStatuses = switch (newStatus) {
+            case WAITING_PAYMENT -> "'PENDING'";
+            case PAID -> "'PENDING', 'WAITING_PAYMENT'";
+            case PROCESSING -> "'PAID'";
+            case COMPLETED -> "'PAID', 'PROCESSING'";
+            case FAILED -> "'PENDING', 'WAITING_PAYMENT', 'PROCESSING'";
+            case EXPIRED -> "'PENDING', 'WAITING_PAYMENT'";
+            case CANCELLED -> "'PENDING', 'WAITING_PAYMENT'";
+            case REFUNDED -> "'PAID', 'PROCESSING', 'COMPLETED'";
+            case PENDING -> null;
+        };
+
+        if (allowedPreviousStatuses == null) {
+            return false;
+        }
+
+        String sql;
+
+        if (newStatus == TransactionStatus.PAID) {
+            sql = """
+                    UPDATE transactions
+                    SET status = 'PAID',
+                        paid_at = COALESCE(paid_at, ?)
+                    WHERE transaction_id = ?
+                      AND status IN (%s)
+                    """.formatted(allowedPreviousStatuses);
+        } else {
+            sql = """
+                    UPDATE transactions
+                    SET status = ?
+                    WHERE transaction_id = ?
+                      AND status IN (%s)
+                    """.formatted(allowedPreviousStatuses);
+        }
 
         try (Connection connection = database.getConnection();
              PreparedStatement statement =
                      connection.prepareStatement(sql)) {
 
-            statement.setString(1, newStatus.name());
-            statement.setString(2, transactionId);
+            if (newStatus == TransactionStatus.PAID) {
+                statement.setLong(1, System.currentTimeMillis());
+                statement.setString(2, transactionId);
+            } else {
+                statement.setString(1, newStatus.name());
+                statement.setString(2, transactionId);
+            }
 
             return statement.executeUpdate() == 1;
         }
@@ -158,29 +186,10 @@ public final class TransactionManager {
 
     public boolean markPaid(String transactionId)
             throws SQLException {
-
-        String sql = """
-                UPDATE transactions
-                SET status = 'PAID',
-                    paid_at = ?
-                WHERE transaction_id = ?
-                  AND status IN ('PENDING', 'WAITING_PAYMENT')
-                """;
-
-        try (Connection connection = database.getConnection();
-             PreparedStatement statement =
-                     connection.prepareStatement(sql)) {
-
-            statement.setLong(1, System.currentTimeMillis());
-            statement.setString(2, transactionId);
-
-            return statement.executeUpdate() == 1;
-        }
+        return updateStatus(transactionId, TransactionStatus.PAID);
     }
 
-    public int getTotalTransactions()
-            throws SQLException {
-
+    public int getTotalTransactions() throws SQLException {
         String sql = "SELECT COUNT(*) FROM transactions";
 
         try (Connection connection = database.getConnection();
@@ -197,9 +206,7 @@ public final class TransactionManager {
 
         long paidTimestamp = result.getLong("paid_at");
 
-        Long paidAt = result.wasNull()
-                ? null
-                : paidTimestamp;
+        Long paidAt = result.wasNull() ? null : paidTimestamp;
 
         return new Transaction(
                 result.getString("transaction_id"),
@@ -209,9 +216,7 @@ public final class TransactionManager {
                 result.getLong("amount"),
                 result.getString("currency"),
                 result.getString("gateway"),
-                TransactionStatus.valueOf(
-                        result.getString("status")
-                ),
+                TransactionStatus.valueOf(result.getString("status")),
                 result.getLong("created_at"),
                 paidAt
         );
