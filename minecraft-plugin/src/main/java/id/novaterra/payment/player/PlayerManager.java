@@ -18,91 +18,69 @@ public final class PlayerManager {
         this.database = database;
     }
 
-    /**
-     * Register a player or update their username.
-     * Compatible with SQLite and MySQL.
-     */
     public void registerPlayer(UUID uuid, String username)
             throws SQLException {
 
         if (uuid == null) {
-            throw new IllegalArgumentException(
-                    "Player UUID cannot be null."
-            );
+            throw new IllegalArgumentException("Player UUID cannot be null.");
         }
 
         if (username == null
                 || username.isBlank()
                 || username.length() > 16
                 || !username.matches("[a-zA-Z0-9_]+")) {
-            throw new IllegalArgumentException(
-                    "Invalid Minecraft username."
-            );
+            throw new IllegalArgumentException("Invalid Minecraft username.");
         }
 
         long now = System.currentTimeMillis();
 
-        try (Connection connection = database.getConnection()) {
-            connection.setAutoCommit(false);
+        String insertSql = """
+                INSERT INTO players (
+                    uuid, username, balance, created_at, updated_at
+                )
+                VALUES (?, ?, 0, ?, ?)
+                """;
 
-            try {
-                int updated;
+        try (Connection connection = database.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(insertSql)) {
 
-                String updateSql = """
-                        UPDATE players
-                        SET username = ?, updated_at = ?
-                        WHERE uuid = ?
-                        """;
+            statement.setString(1, uuid.toString());
+            statement.setString(2, username);
+            statement.setLong(3, now);
+            statement.setLong(4, now);
 
-                try (PreparedStatement statement =
-                             connection.prepareStatement(updateSql)) {
+            statement.executeUpdate();
+            return;
 
-                    statement.setString(1, username);
-                    statement.setLong(2, now);
-                    statement.setString(3, uuid.toString());
-
-                    updated = statement.executeUpdate();
-                }
-
-                if (updated == 0) {
-                    String insertSql = """
-                            INSERT INTO players (
-                                uuid,
-                                username,
-                                balance,
-                                created_at,
-                                updated_at
-                            )
-                            VALUES (?, ?, 0, ?, ?)
-                            """;
-
-                    try (PreparedStatement statement =
-                                 connection.prepareStatement(insertSql)) {
-
-                        statement.setString(1, uuid.toString());
-                        statement.setString(2, username);
-                        statement.setLong(3, now);
-                        statement.setLong(4, now);
-
-                        statement.executeUpdate();
-                    }
-                }
-
-                connection.commit();
-
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
+        } catch (SQLException exception) {
+            if (!isDuplicateKey(exception)) {
                 throw exception;
+            }
+        }
 
-            } finally {
-                connection.setAutoCommit(true);
+        String updateSql = """
+                UPDATE players
+                SET username = ?, updated_at = ?
+                WHERE uuid = ?
+                """;
+
+        try (Connection connection = database.getConnection();
+             PreparedStatement statement =
+                     connection.prepareStatement(updateSql)) {
+
+            statement.setString(1, username);
+            statement.setLong(2, now);
+            statement.setString(3, uuid.toString());
+
+            if (statement.executeUpdate() == 0) {
+                throw new SQLException(
+                        "Could not register or update player: " + uuid
+                );
             }
         }
     }
 
-    /**
-     * Get player's current username.
-     */
     public Optional<String> getUsername(UUID uuid)
             throws SQLException {
 
@@ -124,9 +102,7 @@ public final class PlayerManager {
 
             try (ResultSet result = statement.executeQuery()) {
                 if (result.next()) {
-                    return Optional.ofNullable(
-                            result.getString("username")
-                    );
+                    return Optional.ofNullable(result.getString("username"));
                 }
             }
         }
@@ -134,11 +110,7 @@ public final class PlayerManager {
         return Optional.empty();
     }
 
-    /**
-     * Check whether a player is registered.
-     */
     public boolean exists(UUID uuid) throws SQLException {
-
         if (uuid == null) {
             return false;
         }
@@ -159,5 +131,29 @@ public final class PlayerManager {
                 return result.next();
             }
         }
+    }
+
+    private boolean isDuplicateKey(SQLException exception) {
+        SQLException current = exception;
+
+        while (current != null) {
+            String state = current.getSQLState();
+            int code = current.getErrorCode();
+            String message = current.getMessage();
+
+            if ("23505".equals(state)
+                    || code == 1062
+                    || code == 1555
+                    || code == 2067
+                    || (message != null
+                    && (message.contains("UNIQUE constraint failed")
+                    || message.contains("PRIMARY KEY constraint failed")))) {
+                return true;
+            }
+
+            current = current.getNextException();
+        }
+
+        return false;
     }
 }
