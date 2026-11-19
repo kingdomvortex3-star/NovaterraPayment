@@ -155,6 +155,111 @@ function registerDeliveryRoutes(app, db) {
     });
 
     // =====================================
+    // RENEW DELIVERY LEASE
+    // POST /api/delivery/renew
+    // =====================================
+
+    app.post("/api/delivery/renew", (req, res) => {
+        try {
+            const { server_id, order_id } = req.body || {};
+
+            if (
+                !validServerId(server_id) ||
+                !validOrderId(order_id)
+            ) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Data perpanjangan lease tidak valid."
+                });
+            }
+
+            const result = db.transaction(() => {
+                const job = db.prepare(`
+                    SELECT delivery_status, claimed_by, lease_expires_at
+                    FROM coin_delivery_jobs
+                    WHERE order_id = ?
+                `).get(order_id);
+
+                if (!job) return "NOT_FOUND";
+
+                if (job.delivery_status === "DELIVERED") {
+                    return "ALREADY_DELIVERED";
+                }
+
+                if (
+                    job.delivery_status !== "PROCESSING" ||
+                    job.claimed_by !== server_id
+                ) {
+                    return "NOT_CLAIMED";
+                }
+
+                const update = db.prepare(`
+                    UPDATE coin_delivery_jobs
+                    SET
+                        lease_expires_at = datetime(
+                            'now',
+                            '+${LEASE_SECONDS} seconds'
+                        ),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE order_id = ?
+                      AND delivery_status = 'PROCESSING'
+                      AND claimed_by = ?
+                      AND lease_expires_at > CURRENT_TIMESTAMP
+                `).run(order_id, server_id);
+
+                return update.changes > 0
+                    ? "RENEWED"
+                    : "LEASE_EXPIRED";
+            })();
+
+            if (result === "NOT_FOUND") {
+                return res.status(404).json({
+                    success: false,
+                    message: "Pekerjaan Coin tidak ditemukan."
+                });
+            }
+
+            if (result === "NOT_CLAIMED") {
+                return res.status(409).json({
+                    success: false,
+                    message: "Pekerjaan tidak dimiliki server ini."
+                });
+            }
+
+            if (result === "LEASE_EXPIRED") {
+                return res.status(409).json({
+                    success: false,
+                    message: "Lease pekerjaan sudah kedaluwarsa."
+                });
+            }
+
+            if (result === "ALREADY_DELIVERED") {
+                return res.json({
+                    success: true,
+                    status: "ALREADY_DELIVERED"
+                });
+            }
+
+            return res.json({
+                success: true,
+                status: "RENEWED",
+                lease_seconds: LEASE_SECONDS
+            });
+
+        } catch (error) {
+            console.error(
+                "[NOVATERRA] Delivery renew error:",
+                error.message
+            );
+
+            return res.status(500).json({
+                success: false,
+                message: "Gagal memperpanjang lease pengiriman Coin."
+            });
+        }
+    });
+
+    // =====================================
     // COMPLETE DELIVERY
     // POST /api/delivery/complete
     // =====================================
@@ -180,9 +285,7 @@ function registerDeliveryRoutes(app, db) {
                     WHERE order_id = ?
                 `).get(order_id);
 
-                if (!job) {
-                    return { type: "NOT_FOUND" };
-                }
+                if (!job) return { type: "NOT_FOUND" };
 
                 if (job.delivery_status === "DELIVERED") {
                     return { type: "ALREADY_DELIVERED" };
@@ -278,9 +381,7 @@ function registerDeliveryRoutes(app, db) {
                     WHERE order_id = ?
                 `).get(order_id);
 
-                if (!job) {
-                    return "NOT_FOUND";
-                }
+                if (!job) return "NOT_FOUND";
 
                 if (job.delivery_status === "DELIVERED") {
                     return "ALREADY_DELIVERED";
