@@ -43,50 +43,37 @@ public final class DatabaseManager {
         createTables();
         createIndexes();
 
-        plugin.getLogger().info(
-                "Database connected successfully: " + databaseType
-        );
+        plugin.getLogger().info("Database connected: " + databaseType);
         plugin.getLogger().info("Database tables: Ready");
-        plugin.getLogger().info("Duplicate protection table: Ready");
+        plugin.getLogger().info("Database indexes: Ready");
     }
 
     private void initializeSQLite() throws SQLException {
         try {
             Class.forName("org.sqlite.JDBC");
         } catch (ClassNotFoundException exception) {
-            throw new SQLException(
-                    "SQLite JDBC driver not found!",
-                    exception
-            );
+            throw new SQLException("SQLite JDBC driver not found!", exception);
         }
 
         File folder = plugin.getDataFolder();
 
         if (!folder.exists() && !folder.mkdirs()) {
-            throw new SQLException(
-                    "Cannot create plugin data folder!"
-            );
+            throw new SQLException("Cannot create plugin data folder!");
         }
 
         String filename = plugin.getConfig()
                 .getString("database.sqlite.file", "database.db");
 
         File databaseFile = new File(folder, filename);
-
         File parent = databaseFile.getParentFile();
 
-        if (parent != null
-                && !parent.exists()
-                && !parent.mkdirs()) {
-            throw new SQLException(
-                    "Cannot create SQLite database directory!"
-            );
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new SQLException("Cannot create SQLite database directory!");
         }
 
-        sqlitePath = "jdbc:sqlite:"
-                + databaseFile.getAbsolutePath();
+        sqlitePath = "jdbc:sqlite:" + databaseFile.getAbsolutePath();
 
-        try (Connection connection = getConnection();
+        try (Connection connection = DriverManager.getConnection(sqlitePath);
              Statement statement = connection.createStatement()) {
 
             statement.execute("PRAGMA foreign_keys = ON");
@@ -98,10 +85,7 @@ public final class DatabaseManager {
         try {
             Class.forName("com.mysql.cj.jdbc.Driver");
         } catch (ClassNotFoundException exception) {
-            throw new SQLException(
-                    "MySQL JDBC driver not found!",
-                    exception
-            );
+            throw new SQLException("MySQL JDBC driver not found!", exception);
         }
 
         String host = plugin.getConfig()
@@ -111,10 +95,7 @@ public final class DatabaseManager {
                 .getInt("database.mysql.port", 3306);
 
         String database = plugin.getConfig()
-                .getString(
-                        "database.mysql.database",
-                        "novaterra_payment"
-                );
+                .getString("database.mysql.database", "novaterra_payment");
 
         mysqlUsername = plugin.getConfig()
                 .getString("database.mysql.username", "root");
@@ -125,18 +106,22 @@ public final class DatabaseManager {
         boolean ssl = plugin.getConfig()
                 .getBoolean("database.mysql.ssl", false);
 
-        mysqlUrl = "jdbc:mysql://" + host + ":" + port
-                + "/" + database
+        if (host == null || host.isBlank()
+                || database == null || database.isBlank()
+                || mysqlUsername == null || mysqlUsername.isBlank()
+                || port < 1 || port > 65535) {
+            throw new SQLException("Invalid MySQL configuration!");
+        }
+
+        mysqlUrl = "jdbc:mysql://" + host + ":" + port + "/" + database
                 + "?useSSL=" + ssl
                 + "&serverTimezone=UTC"
                 + "&characterEncoding=UTF-8";
     }
 
     public Connection getConnection() throws SQLException {
-        Connection connection;
-
         if ("SQLITE".equals(databaseType)) {
-            connection = DriverManager.getConnection(sqlitePath);
+            Connection connection = DriverManager.getConnection(sqlitePath);
 
             try (Statement statement = connection.createStatement()) {
                 statement.execute("PRAGMA foreign_keys = ON");
@@ -154,9 +139,7 @@ public final class DatabaseManager {
             );
         }
 
-        throw new SQLException(
-                "Database is not initialized!"
-        );
+        throw new SQLException("Database is not initialized!");
     }
 
     private void createTables() throws SQLException {
@@ -170,7 +153,6 @@ public final class DatabaseManager {
                     updated_at BIGINT NOT NULL
                 )
                 """,
-
                 """
                 CREATE TABLE IF NOT EXISTS transactions (
                     transaction_id VARCHAR(64) PRIMARY KEY,
@@ -185,7 +167,6 @@ public final class DatabaseManager {
                     paid_at BIGINT
                 )
                 """,
-
                 """
                 CREATE TABLE IF NOT EXISTS coin_history (
                     history_id VARCHAR(36) PRIMARY KEY,
@@ -197,7 +178,6 @@ public final class DatabaseManager {
                     created_at BIGINT NOT NULL
                 )
                 """,
-
                 """
                 CREATE TABLE IF NOT EXISTS processed_events (
                     event_id VARCHAR(128) PRIMARY KEY,
@@ -220,19 +200,14 @@ public final class DatabaseManager {
         String[][] indexes = {
                 {"players", "idx_players_username",
                         "CREATE INDEX idx_players_username ON players(username)"},
-
                 {"transactions", "idx_transactions_player",
                         "CREATE INDEX idx_transactions_player ON transactions(player_uuid)"},
-
                 {"transactions", "idx_transactions_status",
                         "CREATE INDEX idx_transactions_status ON transactions(status)"},
-
                 {"coin_history", "idx_coin_history_player",
                         "CREATE INDEX idx_coin_history_player ON coin_history(player_uuid)"},
-
                 {"coin_history", "idx_coin_history_reference",
                         "CREATE INDEX idx_coin_history_reference ON coin_history(reference_id)"},
-
                 {"processed_events", "idx_processed_events_transaction",
                         "CREATE INDEX idx_processed_events_transaction ON processed_events(transaction_id)"}
         };
@@ -243,12 +218,7 @@ public final class DatabaseManager {
             DatabaseMetaData metadata = connection.getMetaData();
 
             for (String[] index : indexes) {
-                if (!indexExists(
-                        metadata,
-                        connection,
-                        index[0],
-                        index[1]
-                )) {
+                if (!indexExists(metadata, connection, index[0], index[1])) {
                     statement.executeUpdate(index[2]);
                 }
             }
@@ -262,19 +232,22 @@ public final class DatabaseManager {
             String indexName
     ) throws SQLException {
 
-        try (ResultSet result = metadata.getIndexInfo(
-                connection.getCatalog(),
-                null,
-                table,
-                false,
-                false
-        )) {
-            while (result.next()) {
-                String existingName = result.getString("INDEX_NAME");
+        String catalog = connection.getCatalog();
 
-                if (existingName != null
-                        && existingName.equalsIgnoreCase(indexName)) {
-                    return true;
+        for (String tableName : new String[]{
+                table,
+                table.toUpperCase(Locale.ROOT)
+        }) {
+            try (ResultSet result = metadata.getIndexInfo(
+                    catalog, null, tableName, false, false
+            )) {
+                while (result.next()) {
+                    String existingName = result.getString("INDEX_NAME");
+
+                    if (existingName != null
+                            && existingName.equalsIgnoreCase(indexName)) {
+                        return true;
+                    }
                 }
             }
         }
@@ -283,9 +256,7 @@ public final class DatabaseManager {
     }
 
     public void close() {
-        plugin.getLogger().info(
-                "Database manager closed."
-        );
+        plugin.getLogger().info("Database manager closed.");
     }
 
     public String getDatabaseType() {
