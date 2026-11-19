@@ -1,0 +1,38 @@
+
+name: NOVATERRA PAYMENT Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+
+      - name: Grant Gradle Permission
+        run: chmod +x gradlew
+
+      - name: Build Project
+        run: ./gradlew build --no-daemon
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: novaterra-payment-build
+          path: |
+            **/build/libs/*.jar
+          if-no-files-found: error
