@@ -105,7 +105,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
 
                 holder.setInventory(inventory);
 
-                // BALANCE
                 inventory.setItem(4, item(
                         Material.GOLD_INGOT,
                         "&6&lᴍʏ ᴄᴏɪɴ ʙᴀʟᴀɴᴄᴇ",
@@ -118,7 +117,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         )
                 ));
 
-                // RANK
                 inventory.setItem(20, item(
                         Material.DIAMOND_BLOCK,
                         "&b&lʀᴀɴᴋ ѕʜᴏᴘ",
@@ -132,7 +130,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         )
                 ));
 
-                // CLAIM BLOCK
                 inventory.setItem(22, item(
                         Material.EMERALD_BLOCK,
                         "&a&lᴄʟᴀɪᴍ ʙʟᴏᴄᴋ",
@@ -147,7 +144,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         )
                 ));
 
-                // PETS
                 inventory.setItem(24, item(
                         Material.CREEPER_SPAWN_EGG,
                         "&d&lᴘᴇᴛѕ ѕʜᴏᴘ",
@@ -162,7 +158,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         )
                 ));
 
-                // COSMETIC
                 inventory.setItem(31, item(
                         Material.AMETHYST_SHARD,
                         "&5&lᴄᴏѕᴍᴇᴛɪᴄ ѕʜᴏᴘ",
@@ -177,7 +172,6 @@ public final class CoinCommand implements CommandExecutor, Listener {
                         )
                 ));
 
-                // COIN TOP UP INFORMATION
                 inventory.setItem(40, item(
                         Material.SUNFLOWER,
                         "&e&lᴛᴏᴘ ᴜᴘ ᴄᴏɪɴ",
@@ -788,12 +782,12 @@ public final class CoinCommand implements CommandExecutor, Listener {
         ItemMeta meta = stack.getItemMeta();
 
         if (meta != null) {
-            meta.setDisplayName(color(style(name)));
+            meta.setDisplayName(color(name));
 
             List<String> coloredLore = new ArrayList<>();
 
             for (String line : lore) {
-                coloredLore.add(color(style(line)));
+                coloredLore.add(color(line));
             }
 
             meta.setLore(coloredLore);
@@ -807,13 +801,16 @@ public final class CoinCommand implements CommandExecutor, Listener {
     // SMALL CAPS FONT
     // ==========================================
 
+    private String smallCaps(String text) {
+        return style(text);
+    }
+
     private String style(String text) {
         StringBuilder result = new StringBuilder();
 
         for (int i = 0; i < text.length(); i++) {
             char current = text.charAt(i);
 
-            // Preserve Minecraft color codes.
             if (current == '&' && i + 1 < text.length()) {
                 result.append(current);
                 result.append(text.charAt(++i));
