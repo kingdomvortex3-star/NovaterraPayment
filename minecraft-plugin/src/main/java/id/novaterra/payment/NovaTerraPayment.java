@@ -12,6 +12,7 @@ import id.novaterra.payment.listeners.PlayerQuitListener;
 import id.novaterra.payment.placeholder.NovaTerraExpansion;
 import id.novaterra.payment.player.PlayerManager;
 import id.novaterra.payment.player.commands.CoinAdminCommand;
+import id.novaterra.payment.player.commands.CoinCommand;
 import id.novaterra.payment.transaction.TransactionLogger;
 import id.novaterra.payment.transaction.TransactionManager;
 
@@ -107,17 +108,36 @@ public final class NovaTerraPayment extends JavaPlugin {
     }
 
     private void registerCommands() {
-        PluginCommand coinCommand = getCommand("coinadmin");
+        PluginCommand coinAdminCommand = getCommand("coinadmin");
 
-        if (coinCommand == null) {
+        if (coinAdminCommand == null) {
             throw new IllegalStateException(
                     "Command coinadmin is missing from plugin.yml!"
             );
         }
 
-        coinCommand.setExecutor(
+        coinAdminCommand.setExecutor(
                 new CoinAdminCommand(this, coinManager)
         );
+
+        PluginCommand coinCommand = getCommand("coin");
+
+        if (coinCommand == null) {
+            throw new IllegalStateException(
+                    "Command coin is missing from plugin.yml!"
+            );
+        }
+
+        CoinCommand executor = new CoinCommand(this, coinManager);
+
+        coinCommand.setExecutor(executor);
+
+        getServer().getPluginManager().registerEvents(
+                executor,
+                this
+        );
+
+        getLogger().info("Coin Market GUI: Registered");
     }
 
     private void registerListeners() {
