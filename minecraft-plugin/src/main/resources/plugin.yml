@@ -18,6 +18,11 @@ commands:
     usage: /novapayment [reload]
     permission: novaterra.payment.admin
 
+  coinadmin:
+    description: Manage player Coin balances
+    usage: /coinadmin <give|take|set> <player> <amount>
+    permission: novaterra.payment.admin
+
 permissions:
   novaterra.payment.admin:
     description: Access to payment administration
