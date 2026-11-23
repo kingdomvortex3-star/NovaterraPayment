@@ -23,15 +23,15 @@ database:
     ssl: false
 
 api:
-  enabled: false
-  url: "https://payment.domain-kamu.com"
+  enabled: true
+  url: "https://api.novaterra.my.id"
   secret: "CHANGE_THIS_SECRET"
   server-id: "novaterra-survival"
   connection-timeout: 10000
   read-timeout: 15000
 
   synchronization:
-    enabled: false
+    enabled: true
     interval-seconds: 5
     batch-size: 20
 
