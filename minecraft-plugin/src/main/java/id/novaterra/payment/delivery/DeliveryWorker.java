@@ -163,7 +163,13 @@ public final class DeliveryWorker {
                 );
 
         plugin.getLogger().info(
-                "Coin delivery worker started."
+                "Coin delivery worker started. API: "
+                        + baseUrl
+                        + " | Server: "
+                        + serverId
+                        + " | Interval: "
+                        + intervalSeconds
+                        + "s"
         );
     }
 
@@ -186,13 +192,7 @@ public final class DeliveryWorker {
 
         try {
             JsonObject requestBody = new JsonObject();
-
             requestBody.addProperty("server_id", serverId);
-
-            /*
-             * Process one job at a time.
-             * This avoids holding a large batch while its lease expires.
-             */
             requestBody.addProperty("limit", 1);
 
             JsonObject response = post(
@@ -202,7 +202,8 @@ public final class DeliveryWorker {
 
             if (!isSuccessful(response)) {
                 throw new IllegalStateException(
-                        "API rejected delivery claim."
+                        "API rejected delivery claim. Response: "
+                                + response
                 );
             }
 
@@ -217,6 +218,9 @@ public final class DeliveryWorker {
 
             for (JsonElement element : jobs) {
                 if (!element.isJsonObject()) {
+                    plugin.getLogger().warning(
+                            "Delivery API returned an invalid job entry."
+                    );
                     continue;
                 }
 
@@ -226,8 +230,12 @@ public final class DeliveryWorker {
         } catch (Exception exception) {
             plugin.getLogger().log(
                     Level.WARNING,
-                    "Coin delivery queue error: "
-                            + exception.getMessage()
+                    "[DeliveryWorker] Queue processing failed. "
+                            + "Exception: "
+                            + exception.getClass().getName()
+                            + " | Message: "
+                            + String.valueOf(exception.getMessage()),
+                    exception
             );
 
         } finally {
@@ -265,15 +273,8 @@ public final class DeliveryWorker {
                 );
             }
 
-            /*
-             * Extend the lease before touching the local database.
-             */
             renewLease(orderId);
 
-            /*
-             * Account creation and credit are performed locally.
-             * The order ID is the unique idempotency reference.
-             */
             coinManager.createAccount(uuid, playerName);
 
             CoinManager.CreditResult result =
@@ -288,14 +289,11 @@ public final class DeliveryWorker {
             if (result != CoinManager.CreditResult.APPLIED
                     && result != CoinManager.CreditResult.DUPLICATE) {
                 throw new IllegalStateException(
-                        "Unexpected Coin credit result."
+                        "Unexpected Coin credit result: "
+                                + result
                 );
             }
 
-            /*
-             * APPLIED means the credit was committed.
-             * DUPLICATE means the same order was already committed.
-             */
             completeDelivery(orderId);
 
             plugin.getLogger().info(
@@ -309,8 +307,13 @@ public final class DeliveryWorker {
         } catch (Exception exception) {
             plugin.getLogger().log(
                     Level.SEVERE,
-                    "Coin delivery failed for order "
-                            + orderId,
+                    "[DeliveryWorker] Coin delivery failed. "
+                            + "Order: "
+                            + String.valueOf(orderId)
+                            + " | Exception: "
+                            + exception.getClass().getName()
+                            + " | Message: "
+                            + String.valueOf(exception.getMessage()),
                     exception
             );
 
@@ -327,7 +330,6 @@ public final class DeliveryWorker {
             throws Exception {
 
         JsonObject body = new JsonObject();
-
         body.addProperty("server_id", serverId);
         body.addProperty("order_id", orderId);
 
@@ -358,7 +360,6 @@ public final class DeliveryWorker {
             throws Exception {
 
         JsonObject body = new JsonObject();
-
         body.addProperty("server_id", serverId);
         body.addProperty("order_id", orderId);
 
@@ -393,7 +394,6 @@ public final class DeliveryWorker {
     ) {
         try {
             JsonObject body = new JsonObject();
-
             body.addProperty("server_id", serverId);
             body.addProperty("order_id", orderId);
 
@@ -416,14 +416,21 @@ public final class DeliveryWorker {
                 plugin.getLogger().warning(
                         "API could not record delivery failure for "
                                 + orderId
+                                + ". Response: "
+                                + response
                 );
             }
 
         } catch (Exception exception) {
             plugin.getLogger().log(
                     Level.WARNING,
-                    "Could not report delivery failure for "
-                            + orderId,
+                    "[DeliveryWorker] Could not report delivery failure. "
+                            + "Order: "
+                            + orderId
+                            + " | Exception: "
+                            + exception.getClass().getName()
+                            + " | Message: "
+                            + String.valueOf(exception.getMessage()),
                     exception
             );
         }
@@ -466,37 +473,68 @@ public final class DeliveryWorker {
                 )
         );
 
+        int statusCode = response.statusCode();
+        String responseBody = response.body();
+
         JsonElement parsed;
 
         try {
-            parsed = JsonParser.parseString(response.body());
+            parsed = JsonParser.parseString(responseBody);
         } catch (RuntimeException exception) {
             throw new IllegalStateException(
-                    "API returned invalid JSON. HTTP "
-                            + response.statusCode(),
+                    "API returned invalid JSON. "
+                            + "Endpoint: "
+                            + endpoint
+                            + " | HTTP: "
+                            + statusCode
+                            + " | Response: "
+                            + safeResponse(responseBody),
                     exception
             );
         }
 
         if (!parsed.isJsonObject()) {
             throw new IllegalStateException(
-                    "API response is not a JSON object."
+                    "API response is not a JSON object. "
+                            + "Endpoint: "
+                            + endpoint
+                            + " | HTTP: "
+                            + statusCode
             );
         }
 
         JsonObject result = parsed.getAsJsonObject();
 
-        if (response.statusCode() < 200
-                || response.statusCode() >= 300) {
+        if (statusCode < 200 || statusCode >= 300) {
             throw new IllegalStateException(
-                    "API HTTP status "
-                            + response.statusCode()
-                            + ": "
-                            + result
+                    "API request failed. "
+                            + "Endpoint: "
+                            + endpoint
+                            + " | HTTP: "
+                            + statusCode
+                            + " | Response: "
+                            + safeResponse(responseBody)
             );
         }
 
         return result;
+    }
+
+    private String safeResponse(String response) {
+        if (response == null) {
+            return "<empty>";
+        }
+
+        String safe = response.replaceAll(
+                "(?i)(secret|token|password)\\s*[:=]\\s*[^,}\\s]+",
+                "$1=[REDACTED]"
+        );
+
+        if (safe.length() > 1000) {
+            safe = safe.substring(0, 1000) + "...";
+        }
+
+        return safe;
     }
 
     private boolean isSuccessful(JsonObject response) {
