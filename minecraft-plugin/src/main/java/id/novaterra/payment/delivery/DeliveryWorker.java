@@ -14,12 +14,16 @@ import id.novaterra.payment.economy.CoinManager;
 import org.bukkit.Bukkit;
 import org.bukkit.scheduler.BukkitTask;
 
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
+import java.security.GeneralSecurityException;
 import java.util.HexFormat;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -131,14 +135,14 @@ public final class DeliveryWorker {
 
         if (!baseUrl.startsWith("https://")) {
             plugin.getLogger().severe(
-                    "Delivery worker requires HTTPS."
+                    "[DeliveryWorker] API URL must use HTTPS."
             );
             return;
         }
 
         if (!validServerId(serverId)) {
             plugin.getLogger().severe(
-                    "Invalid api.server-id."
+                    "[DeliveryWorker] Invalid api.server-id."
             );
             return;
         }
@@ -147,7 +151,7 @@ public final class DeliveryWorker {
                 || secret.isBlank()
                 || secret.equals("CHANGE_THIS_SECRET")) {
             plugin.getLogger().severe(
-                    "API secret is not configured."
+                    "[DeliveryWorker] API secret is not configured."
             );
             return;
         }
@@ -163,13 +167,14 @@ public final class DeliveryWorker {
                 );
 
         plugin.getLogger().info(
-                "Coin delivery worker started. API: "
-                        + baseUrl
-                        + " | Server: "
-                        + serverId
-                        + " | Interval: "
-                        + intervalSeconds
-                        + "s"
+                "[DeliveryWorker] Started."
+                        + " API: " + baseUrl
+                        + " | Server: " + serverId
+                        + " | Interval: " + intervalSeconds + "s"
+                        + " | Connect timeout: "
+                        + plugin.getConfig().getInt(
+                                "api.connection-timeout", 10000
+                        ) + "ms"
         );
     }
 
@@ -192,7 +197,10 @@ public final class DeliveryWorker {
 
         try {
             JsonObject requestBody = new JsonObject();
+
             requestBody.addProperty("server_id", serverId);
+
+            // Process one job at a time.
             requestBody.addProperty("limit", 1);
 
             JsonObject response = post(
@@ -203,7 +211,7 @@ public final class DeliveryWorker {
             if (!isSuccessful(response)) {
                 throw new IllegalStateException(
                         "API rejected delivery claim. Response: "
-                                + response
+                                + safeResponse(GSON.toJson(response))
                 );
             }
 
@@ -219,7 +227,7 @@ public final class DeliveryWorker {
             for (JsonElement element : jobs) {
                 if (!element.isJsonObject()) {
                     plugin.getLogger().warning(
-                            "Delivery API returned an invalid job entry."
+                            "[DeliveryWorker] Invalid job returned by API."
                     );
                     continue;
                 }
@@ -228,13 +236,9 @@ public final class DeliveryWorker {
             }
 
         } catch (Exception exception) {
-            plugin.getLogger().log(
+            logException(
                     Level.WARNING,
-                    "[DeliveryWorker] Queue processing failed. "
-                            + "Exception: "
-                            + exception.getClass().getName()
-                            + " | Message: "
-                            + String.valueOf(exception.getMessage()),
+                    "[DeliveryWorker] Queue processing failed",
                     exception
             );
 
@@ -273,6 +277,7 @@ public final class DeliveryWorker {
                 );
             }
 
+            // Extend lease before local database operation.
             renewLease(orderId);
 
             coinManager.createAccount(uuid, playerName);
@@ -289,31 +294,25 @@ public final class DeliveryWorker {
             if (result != CoinManager.CreditResult.APPLIED
                     && result != CoinManager.CreditResult.DUPLICATE) {
                 throw new IllegalStateException(
-                        "Unexpected Coin credit result: "
-                                + result
+                        "Unexpected Coin credit result: " + result
                 );
             }
 
+            // APPLIED: committed.
+            // DUPLICATE: already committed for this order.
             completeDelivery(orderId);
 
             plugin.getLogger().info(
-                    "Delivery confirmed: "
+                    "[DeliveryWorker] Delivery confirmed: "
                             + orderId
-                            + " ("
-                            + result.name()
-                            + ")"
+                            + " (" + result.name() + ")"
             );
 
         } catch (Exception exception) {
-            plugin.getLogger().log(
+            logException(
                     Level.SEVERE,
-                    "[DeliveryWorker] Coin delivery failed. "
-                            + "Order: "
-                            + String.valueOf(orderId)
-                            + " | Exception: "
-                            + exception.getClass().getName()
-                            + " | Message: "
-                            + String.valueOf(exception.getMessage()),
+                    "[DeliveryWorker] Delivery failed. Order: "
+                            + String.valueOf(orderId),
                     exception
             );
 
@@ -330,6 +329,7 @@ public final class DeliveryWorker {
             throws Exception {
 
         JsonObject body = new JsonObject();
+
         body.addProperty("server_id", serverId);
         body.addProperty("order_id", orderId);
 
@@ -341,7 +341,7 @@ public final class DeliveryWorker {
         if (!isSuccessful(response)) {
             throw new IllegalStateException(
                     "Could not renew delivery lease: "
-                            + response
+                            + safeResponse(GSON.toJson(response))
             );
         }
 
@@ -360,6 +360,7 @@ public final class DeliveryWorker {
             throws Exception {
 
         JsonObject body = new JsonObject();
+
         body.addProperty("server_id", serverId);
         body.addProperty("order_id", orderId);
 
@@ -371,7 +372,7 @@ public final class DeliveryWorker {
         if (!isSuccessful(response)) {
             throw new IllegalStateException(
                     "API did not confirm Coin delivery: "
-                            + response
+                            + safeResponse(GSON.toJson(response))
             );
         }
 
@@ -394,6 +395,7 @@ public final class DeliveryWorker {
     ) {
         try {
             JsonObject body = new JsonObject();
+
             body.addProperty("server_id", serverId);
             body.addProperty("order_id", orderId);
 
@@ -414,23 +416,18 @@ public final class DeliveryWorker {
 
             if (!isSuccessful(response)) {
                 plugin.getLogger().warning(
-                        "API could not record delivery failure for "
-                                + orderId
-                                + ". Response: "
-                                + response
+                        "[DeliveryWorker] API could not record failure. "
+                                + "Order: " + orderId
+                                + " | Response: "
+                                + safeResponse(GSON.toJson(response))
                 );
             }
 
         } catch (Exception exception) {
-            plugin.getLogger().log(
+            logException(
                     Level.WARNING,
                     "[DeliveryWorker] Could not report delivery failure. "
-                            + "Order: "
-                            + orderId
-                            + " | Exception: "
-                            + exception.getClass().getName()
-                            + " | Message: "
-                            + String.valueOf(exception.getMessage()),
+                            + "Order: " + orderId,
                     exception
             );
         }
@@ -451,8 +448,10 @@ public final class DeliveryWorker {
                 timestamp + "." + requestBody
         );
 
+        URI uri = URI.create(baseUrl + endpoint);
+
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + endpoint))
+                .uri(uri)
                 .timeout(
                         java.time.Duration.ofMillis(readTimeout)
                 )
@@ -466,12 +465,47 @@ public final class DeliveryWorker {
                 ))
                 .build();
 
-        HttpResponse<String> response = httpClient.send(
-                request,
-                HttpResponse.BodyHandlers.ofString(
-                        StandardCharsets.UTF_8
-                )
-        );
+        HttpResponse<String> response;
+
+        try {
+            response = httpClient.send(
+                    request,
+                    HttpResponse.BodyHandlers.ofString(
+                            StandardCharsets.UTF_8
+                    )
+            );
+
+        } catch (Exception exception) {
+            String host = uri.getHost();
+
+            if (hasCause(exception, UnknownHostException.class)) {
+                throw new IOException(
+                        "DNS resolution failed for API host: " + host,
+                        exception
+                );
+            }
+
+            if (hasCause(exception, ConnectException.class)) {
+                throw new IOException(
+                        "Connection refused or unreachable API host: "
+                                + host
+                                + " | Port: "
+                                + (uri.getPort() == -1
+                                        ? "443"
+                                        : uri.getPort()),
+                        exception
+                );
+            }
+
+            if (hasCause(exception, SocketTimeoutException.class)) {
+                throw new IOException(
+                        "Connection/read timeout for API host: " + host,
+                        exception
+                );
+            }
+
+            throw exception;
+        }
 
         int statusCode = response.statusCode();
         String responseBody = response.body();
@@ -482,11 +516,9 @@ public final class DeliveryWorker {
             parsed = JsonParser.parseString(responseBody);
         } catch (RuntimeException exception) {
             throw new IllegalStateException(
-                    "API returned invalid JSON. "
-                            + "Endpoint: "
-                            + endpoint
-                            + " | HTTP: "
-                            + statusCode
+                    "API returned invalid JSON."
+                            + " Endpoint: " + endpoint
+                            + " | HTTP: " + statusCode
                             + " | Response: "
                             + safeResponse(responseBody),
                     exception
@@ -495,11 +527,9 @@ public final class DeliveryWorker {
 
         if (!parsed.isJsonObject()) {
             throw new IllegalStateException(
-                    "API response is not a JSON object. "
-                            + "Endpoint: "
-                            + endpoint
-                            + " | HTTP: "
-                            + statusCode
+                    "API response is not a JSON object."
+                            + " Endpoint: " + endpoint
+                            + " | HTTP: " + statusCode
             );
         }
 
@@ -507,17 +537,52 @@ public final class DeliveryWorker {
 
         if (statusCode < 200 || statusCode >= 300) {
             throw new IllegalStateException(
-                    "API request failed. "
-                            + "Endpoint: "
-                            + endpoint
-                            + " | HTTP: "
-                            + statusCode
+                    "API request failed."
+                            + " Endpoint: " + endpoint
+                            + " | HTTP: " + statusCode
                             + " | Response: "
                             + safeResponse(responseBody)
             );
         }
 
         return result;
+    }
+
+    private boolean hasCause(
+            Throwable throwable,
+            Class<? extends Throwable> type
+    ) {
+        Throwable current = throwable;
+
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+
+            if (current.getCause() == current) {
+                break;
+            }
+
+            current = current.getCause();
+        }
+
+        return false;
+    }
+
+    private void logException(
+            Level level,
+            String message,
+            Exception exception
+    ) {
+        plugin.getLogger().log(
+                level,
+                message
+                        + " | Exception: "
+                        + exception.getClass().getName()
+                        + " | Message: "
+                        + String.valueOf(exception.getMessage()),
+                exception
+        );
     }
 
     private String safeResponse(String response) {
@@ -544,7 +609,7 @@ public final class DeliveryWorker {
     }
 
     private String generateSignature(String payload)
-            throws Exception {
+            throws GeneralSecurityException {
 
         Mac mac = Mac.getInstance("HmacSHA256");
 
